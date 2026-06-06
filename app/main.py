@@ -1,0 +1,240 @@
+import gradio as gr
+from .story_generator import start_story, continue_story, StorySession, StoryBeat
+from .prompts import load_prompts
+
+# ── Load config ────────────────────────────────────────────────────────────────
+
+prompts = load_prompts()
+age_ranges = prompts["options"]["age_ranges"]
+languages = prompts["options"]["languages"]
+
+# ── Handlers ───────────────────────────────────────────────────────────────────
+
+def on_start_story(
+    character: str,
+    age_range: str,
+    theme: str,
+    language: str,
+):
+    """Handle the Begin Story button click."""
+    if not character.strip():
+        yield (
+            "Please enter a character name.",
+            gr.update(visible=False),  # choices row
+            gr.update(choices=[]),     # choice buttons
+            None,                      # session state
+        )
+        return
+
+    if not theme.strip():
+        yield (
+            "Please enter a story theme.",
+            gr.update(visible=False),
+            gr.update(choices=[]),
+            None,
+        )
+        return
+
+    yield (
+        "✨ Starting your story...",
+        gr.update(visible=False),
+        gr.update(choices=[]),
+        None,
+    )
+
+    generator, session = start_story(
+        character=character.strip(),
+        age_range=age_range,
+        theme=theme.strip(),
+        language=languages[language],
+    )
+
+    last_beat = None
+    for narrative, beat in generator:
+        last_beat = beat
+        yield (
+            narrative,
+            gr.update(visible=False),
+            gr.update(choices=[]),
+            session,
+        )
+
+    if last_beat is not None:
+        if last_beat.is_final:
+            yield (
+                narrative,
+                gr.update(visible=False),
+                gr.update(choices=[]),
+                session,
+            )
+        else:
+            yield (
+                narrative,
+                gr.update(visible=True),
+                gr.update(choices=last_beat.choices),
+                session,
+            )
+    else:
+        yield (
+            narrative + "\n\n⚠️ Could not generate choices. Please try again.",
+            gr.update(visible=False),
+            gr.update(choices=[]),
+            session,
+        )
+
+
+def on_choice_selected(
+    choice: str,
+    session: StorySession,
+):
+    """Handle a choice button click."""
+    if session is None:
+        yield (
+            "No active story session. Please start a new story.",
+            gr.update(visible=False),
+            gr.update(choices=[]),
+            None,
+        )
+        return
+
+    yield (
+        f"✨ You chose: {choice}\n\nContinuing the story...",
+        gr.update(visible=False),
+        gr.update(choices=[]),
+        session,
+    )
+
+    generator, session = continue_story(session=session, choice=choice)
+
+    last_beat = None
+    for narrative, beat in generator:
+        last_beat = beat
+        yield (
+            narrative,
+            gr.update(visible=False),
+            gr.update(choices=[]),
+            session,
+        )
+
+    if last_beat is not None:
+        if last_beat.is_final:
+            yield (
+                narrative + "\n\n🌟 The End! What a wonderful adventure!",
+                gr.update(visible=False),
+                gr.update(choices=[]),
+                session,
+            )
+        else:
+            yield (
+                narrative,
+                gr.update(visible=True),
+                gr.update(choices=last_beat.choices),
+                session,
+            )
+    else:
+        yield (
+            narrative + "\n\n⚠️ Could not generate choices. Please try again.",
+            gr.update(visible=False),
+            gr.update(choices=[]),
+            session,
+        )
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+
+with gr.Blocks(title="StorySpout 🌱") as demo:
+
+    # session state — persists across button clicks
+    session_state = gr.State(None)
+
+    gr.Markdown(
+        """
+        # 🌱 StorySprout
+        ### An interactive story just for you
+        """
+    )
+
+    with gr.Row():
+
+        # ── Left column: story controls ────────────────────────────────────────
+        with gr.Column(scale=1):
+            character_input = gr.Textbox(
+                label="Main Character",
+                placeholder="e.g. Luna the rabbit, a brave knight called Max...",
+                max_lines=1,
+            )
+            age_range_input = gr.Dropdown(
+                label="Age Range",
+                choices=age_ranges,
+                value=age_ranges[0],
+            )
+            theme_input = gr.Textbox(
+                label="Story Theme",
+                placeholder="e.g. making new friends, being brave in the dark...",
+                max_lines=2,
+            )
+            language_input = gr.Radio(
+                label="Language",
+                choices=list(languages.keys()),
+                value="English",
+            )
+            start_btn = gr.Button(
+                "✨ Begin Story",
+                variant="primary",
+                size="lg",
+            )
+
+        # ── Right column: story output + choices ───────────────────────────────
+        with gr.Column(scale=2):
+            story_output = gr.Textbox(
+                label="Your Story",
+                lines=15,
+                interactive=False,
+                placeholder="Your story will appear here...",
+            )
+
+            # choices row — hidden until first beat is ready
+            with gr.Row(visible=False) as choices_row:
+                choice_selector = gr.Radio(
+                    label="What happens next?",
+                    choices=[],
+                    interactive=True,
+                )
+                choose_btn = gr.Button(
+                    "→ Choose",
+                    variant="primary",
+                )
+
+    # ── Event handlers ─────────────────────────────────────────────────────────
+
+    start_btn.click(
+        fn=on_start_story,
+        inputs=[
+            character_input,
+            age_range_input,
+            theme_input,
+            language_input,
+        ],
+        outputs=[
+            story_output,
+            choices_row,
+            choice_selector,
+            session_state,
+        ],
+    )
+
+    choose_btn.click(
+        fn=on_choice_selected,
+        inputs=[
+            choice_selector,
+            session_state,
+        ],
+        outputs=[
+            story_output,
+            choices_row,
+            choice_selector,
+            session_state,
+        ],
+    )
+
+if __name__ == "__main__":
+    demo.launch()
