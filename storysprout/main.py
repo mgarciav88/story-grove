@@ -1,5 +1,13 @@
 import gradio as gr
-from .story_generator import start_story, continue_story, StorySession, StoryBeat
+
+try:
+    import spaces
+    _gpu = spaces.GPU
+except ImportError:
+    _gpu = lambda fn: fn  # no-op for local dev
+
+from .narrator import narrate
+from .story_generator import start_story, continue_story, StorySession
 from .prompts import load_prompts
 
 # ── Load config ────────────────────────────────────────────────────────────────
@@ -8,21 +16,73 @@ prompts = load_prompts()
 age_ranges = prompts["options"]["age_ranges"]
 languages = prompts["options"]["languages"]
 
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _stream_and_narrate(generator):
+    """
+    Consume a beat generator, streaming narrative text.
+    Once complete, narrate the beat and return audio.
+    Returns: (final_narrative, StoryBeat, audio)
+    """
+    last_narrative = ""
+    last_beat = None
+
+    for narrative, beat in generator:
+        last_narrative = narrative
+        last_beat = beat
+        yield narrative, None, None  # stream text, no audio yet
+
+    if last_narrative:
+        sample_rate, wav = narrate(last_narrative)
+        yield last_narrative, last_beat, (sample_rate, wav)
+
+
+def _make_outputs(
+        narrative: str,
+        beat,
+        audio,
+        session: StorySession,
+):
+    """Build the tuple of Gradio output updates."""
+    if beat is None or beat.is_final:
+        story_text = narrative
+        if beat and beat.is_final:
+            story_text += "\n\n🌟 The End! What a wonderful adventure!"
+        return (
+            story_text,
+            gr.update(visible=False),  # choices row
+            gr.update(choices=[]),  # choice selector
+            audio,  # audio component
+            session,
+        )
+    else:
+        return (
+            narrative,
+            gr.update(visible=True),
+            gr.update(choices=beat.choices, value=None),
+            audio,
+            session,
+        )
+
+
 # ── Handlers ───────────────────────────────────────────────────────────────────
 
+@_gpu
 def on_start_story(
-    character: str,
-    age_range: str,
-    theme: str,
-    language: str,
+        character: str,
+        age_range: str,
+        theme: str,
+        language: str,
 ):
     """Handle the Begin Story button click."""
     if not character.strip():
         yield (
             "Please enter a character name.",
             gr.update(visible=False),  # choices row
-            gr.update(choices=[]),     # choice buttons
-            None,                      # session state
+            gr.update(choices=[]),  # choice buttons
+            None,
+            None,  # session state
         )
         return
 
@@ -32,6 +92,7 @@ def on_start_story(
             gr.update(visible=False),
             gr.update(choices=[]),
             None,
+            None,
         )
         return
 
@@ -39,6 +100,7 @@ def on_start_story(
         "✨ Starting your story...",
         gr.update(visible=False),
         gr.update(choices=[]),
+        None,
         None,
     )
 
@@ -49,43 +111,25 @@ def on_start_story(
         language=languages[language],
     )
 
+    last_narrative = ""
     last_beat = None
-    for narrative, beat in generator:
+    last_audio = None
+
+    for narrative, beat, audio in _stream_and_narrate(generator):
+        last_narrative = narrative
         last_beat = beat
-        yield (
-            narrative,
-            gr.update(visible=False),
-            gr.update(choices=[]),
-            session,
-        )
+        if audio is not None:
+            last_audio = audio
 
-    if last_beat is not None:
-        if last_beat.is_final:
-            yield (
-                narrative,
-                gr.update(visible=False),
-                gr.update(choices=[]),
-                session,
-            )
-        else:
-            yield (
-                narrative,
-                gr.update(visible=True),
-                gr.update(choices=last_beat.choices),
-                session,
-            )
-    else:
-        yield (
-            narrative + "\n\n⚠️ Could not generate choices. Please try again.",
-            gr.update(visible=False),
-            gr.update(choices=[]),
-            session,
-        )
+        yield _make_outputs(narrative, beat, audio, session)
+
+    yield _make_outputs(last_narrative, last_beat, last_audio, session)
 
 
+@_gpu
 def on_choice_selected(
-    choice: str,
-    session: StorySession,
+        choice: str,
+        session: StorySession,
 ):
     """Handle a choice button click."""
     if session is None:
@@ -93,7 +137,8 @@ def on_choice_selected(
             "No active story session. Please start a new story.",
             gr.update(visible=False),
             gr.update(choices=[]),
-            None,
+            None,   # audio_output
+            None,   # session_state
         )
         return
 
@@ -101,48 +146,30 @@ def on_choice_selected(
         f"✨ You chose: {choice}\n\nContinuing the story...",
         gr.update(visible=False),
         gr.update(choices=[]),
-        session,
+        None,     # audio_output
+        session,  # session_state
     )
 
     generator, session = continue_story(session=session, choice=choice)
 
+    last_narrative = ""
     last_beat = None
-    for narrative, beat in generator:
-        last_beat = beat
-        yield (
-            narrative,
-            gr.update(visible=False),
-            gr.update(choices=[]),
-            session,
-        )
+    last_audio = None
 
-    if last_beat is not None:
-        if last_beat.is_final:
-            yield (
-                narrative + "\n\n🌟 The End! What a wonderful adventure!",
-                gr.update(visible=False),
-                gr.update(choices=[]),
-                session,
-            )
-        else:
-            yield (
-                narrative,
-                gr.update(visible=True),
-                gr.update(choices=last_beat.choices),
-                session,
-            )
-    else:
-        yield (
-            narrative + "\n\n⚠️ Could not generate choices. Please try again.",
-            gr.update(visible=False),
-            gr.update(choices=[]),
-            session,
-        )
+    for narrative, beat, audio in _stream_and_narrate(generator):
+        last_narrative = narrative
+        last_beat = beat
+        if audio is not None:
+            last_audio = audio
+
+        yield _make_outputs(narrative, beat, audio, session)
+
+    yield _make_outputs(last_narrative, last_beat, last_audio, session)
+
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
 
 with gr.Blocks(title="StorySpout 🌱") as demo:
-
     # session state — persists across button clicks
     session_state = gr.State(None)
 
@@ -154,7 +181,6 @@ with gr.Blocks(title="StorySpout 🌱") as demo:
     )
 
     with gr.Row():
-
         # ── Left column: story controls ────────────────────────────────────────
         with gr.Column(scale=1):
             character_input = gr.Textbox(
@@ -192,6 +218,14 @@ with gr.Blocks(title="StorySpout 🌱") as demo:
                 placeholder="Your story will appear here...",
             )
 
+            audio_output = gr.Audio(
+                label="🔊 Listen to the story",
+                type="numpy",
+                autoplay=True,
+                visible=True,
+            )
+
+
             # choices row — hidden until first beat is ready
             with gr.Row(visible=False) as choices_row:
                 choice_selector = gr.Radio(
@@ -218,6 +252,7 @@ with gr.Blocks(title="StorySpout 🌱") as demo:
             story_output,
             choices_row,
             choice_selector,
+            audio_output,
             session_state,
         ],
     )
@@ -232,9 +267,11 @@ with gr.Blocks(title="StorySpout 🌱") as demo:
             story_output,
             choices_row,
             choice_selector,
+            audio_output,
             session_state,
         ],
     )
+
 
 if __name__ == "__main__":
     demo.launch()
