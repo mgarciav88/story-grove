@@ -8,13 +8,16 @@ from pydantic import BaseModel
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
 from dotenv import load_dotenv
 
+from . import vram_manager
 from .prompts import load_prompts, build_first_beat_prompt, build_continue_beat_prompt
+from .vram_manager import Model
 
 load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 MODEL_ID = os.getenv("MODEL_ID", "google/gemma-3-4b-it")
+TEXT_DEVICE = os.getenv("TEXT_DEVICE", "cuda")
 HF_TOKEN = os.getenv("HF_TOKEN")
 USE_4BIT = os.getenv("QUANTIZE_4BIT", "false").lower() == "true"
 MAX_BEATS = 5
@@ -51,35 +54,20 @@ class StorySession:
 # ── Device ─────────────────────────────────────────────────────────────────────
 
 def get_device() -> str:
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and TEXT_DEVICE == "cuda":
         return "cuda"
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
 
-# ── Singleton Model Loader ─────────────────────────────────────────────────────
 
-_model = None
-_tokenizer = None
+# ── Model Loader / Unloader ────────────────────────────────────────────────────
 
-def load_model():
-    global _model, _tokenizer
-
-    if _model is not None:
-        return _model, _tokenizer
-
+def _loader() -> tuple:
+    """Load and return (model, tokenizer)."""
     device = get_device()
-    print(f"Loading {MODEL_ID} on {device}...")
-
-    _tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_ID,
-        token=HF_TOKEN,
-    )
-
-    kwargs = dict(
-        token=HF_TOKEN,
-        device_map="auto",
-    )
+    print(f"Using device: {device} for text generation")
+    kwargs = dict(token=HF_TOKEN, device_map=device)
 
     if USE_4BIT:
         from transformers import BitsAndBytesConfig
@@ -88,9 +76,31 @@ def load_model():
     else:
         kwargs["dtype"] = torch.bfloat16
 
-    _model = AutoModelForCausalLM.from_pretrained(MODEL_ID, **kwargs)
-    print("Model loaded.")
-    return _model, _tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=HF_TOKEN)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, **kwargs)
+    return model, tokenizer
+
+def _unloader(instance: tuple):
+    """Unload (model, tokenizer) from memory."""
+    model, tokenizer = instance
+    del model
+    del tokenizer
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
+# ── Register with VRAM manager ─────────────────────────────────────────────────
+
+vram_manager.register(Model.STORY, _loader, _unloader)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _get_model_and_tokenizer():
+    vram_manager.request(Model.STORY)
+    return vram_manager.get(Model.STORY)  # returns (model, tokenizer)
+
 
 # ── Streaming Parser ───────────────────────────────────────────────────────────
 
@@ -126,18 +136,19 @@ def parse_streaming_response(full_text: str) -> tuple[str, Optional[StoryBeat]]:
 
 def _stream_beat(
     messages: list[dict],
-    max_new_tokens: int = 1024
+    max_new_tokens: int = 2048
 ) -> Generator[tuple[str, Optional[StoryBeat]], None, None]:
     """
     Streams (narrative_text, StoryBeat_or_None) tuples.
     narrative_text grows with each token.
     StoryBeat becomes non-None once JSON is fully parsed.
     """
-    model, tokenizer = load_model()
+    model, tokenizer = _get_model_and_tokenizer()
 
     inputs = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
+        enable_thinking=False,
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
