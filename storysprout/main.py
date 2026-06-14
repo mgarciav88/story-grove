@@ -17,6 +17,8 @@ from .image_generator import generate_image
 from .story_generator import start_story, continue_story, StorySession
 from .prompts import load_prompts
 from .ui.theme import BOOK_CSS, theme as book_theme
+from . import vram_manager
+from .vram_manager import Model, VRAM_SWAP
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -63,6 +65,30 @@ def _book_page(narrative: str, image=None, is_odd: bool = True) -> str:
 
 # ── Stream helper ──────────────────────────────────────────────────────────────
 
+def _generate_image_and_audio(narrative: str):
+    """
+    Generator that yields (image, audio) twice:
+      1st yield: image ready, audio=None (still generating)
+      2nd yield: audio ready
+    Parallel when models coexist in VRAM, sequential otherwise.
+    """
+    if not VRAM_SWAP:
+        vram_manager.request(Model.IMAGE)
+        vram_manager.request(Model.NARRATOR)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_image = executor.submit(generate_image, narrative)
+            future_audio = executor.submit(narrate, narrative)
+            image = future_image.result()
+            yield image, None
+            audio = future_audio.result()
+        yield image, audio
+    else:
+        image = generate_image(narrative)
+        yield image, None
+        audio = narrate(narrative)
+        yield image, audio
+
+
 def _stream_and_narrate(generator):
     last_narrative = ""
     last_beat = None
@@ -73,16 +99,12 @@ def _stream_and_narrate(generator):
         yield narrative, None, None, None
 
     if last_narrative:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_image = executor.submit(generate_image, last_narrative)
-            future_audio = executor.submit(narrate, last_narrative)
-
-            image = future_image.result()
-            time.sleep(1)
-            yield last_narrative, last_beat, None, image
-
-            sample_rate, wav = future_audio.result()
-        yield last_narrative, last_beat, (sample_rate, wav), image
+        for image, audio in _generate_image_and_audio(last_narrative):
+            if audio is None:
+                yield last_narrative, last_beat, None, image
+                time.sleep(1)
+            else:
+                yield last_narrative, last_beat, audio, image
 
 
 # ── Output helpers ─────────────────────────────────────────────────────────────
