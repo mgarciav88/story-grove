@@ -23,6 +23,14 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 USE_4BIT = os.getenv("QUANTIZE_4BIT", "false").lower() == "true"
 MAX_BEATS = 5
 
+REQUIRED_SKELETON_KEYS = {
+    "paradigm", "title", "protagonist", "character_appearance",
+    "initial_trait", "initial_emotion", "main_conflict",
+    "external_goal", "internal_goal", "mentor", "ally", "antagonist",
+    "setting", "symbolic_object", "value_learned", "final_emotion",
+    "theme", "beat_arc",
+}
+
 # ── Data Models ────────────────────────────────────────────────────────────────
 
 class StoryBeat(BaseModel):
@@ -43,10 +51,52 @@ class StorySession:
     visual_profile: str = ""
     skeleton: dict = field(default_factory=dict)
     full_beats: list = field(default_factory=list)
+    llm_calls: list = field(default_factory=list)
 
     def add_beat(self, beat: str, choice: str):
         self.story_so_far.append(f"Beat {self.beat_number}: {beat[:120]}...")
         self.story_so_far.append(f"Child chose: {choice}")
+
+    def record_llm_call(self, stage: str, system: str, user: str, beat_number=None) -> None:
+        self.llm_calls.append({
+            "stage": stage,
+            "beat_number": beat_number,
+            "system": system,
+            "user": user,
+        })
+
+    def build_trace_messages(self) -> list[dict]:
+        """
+        Reconstruct full system→user→assistant triples from recorded LLM calls.
+        Each entry is already in TRL conversational format; flattening all entries
+        across traces gives ready-to-train SFT rows (train/inference parity with
+        training/build_dataset.py).
+        """
+        beats = {b["beat_number"]: b for b in self.full_beats}
+        out = []
+        for call in self.llm_calls:
+            if call["stage"] == "skeleton":
+                assistant = json.dumps(self.skeleton, ensure_ascii=False, separators=(",", ":"))
+            else:
+                b = beats.get(call["beat_number"], {})
+                assistant = (
+                    b.get("narrative", "").strip()
+                    + "\n"
+                    + json.dumps(
+                        {"choices": b.get("choices", []), "is_final": b.get("is_final", False)},
+                        ensure_ascii=False,
+                    )
+                )
+            out.append({
+                "stage": call["stage"],
+                "beat_number": call["beat_number"],
+                "messages": [
+                    {"role": "system", "content": call["system"]},
+                    {"role": "user", "content": call["user"]},
+                    {"role": "assistant", "content": assistant},
+                ],
+            })
+        return out
 
     def record_full_beat(self, narrative: str, choices: list, is_final: bool) -> None:
         self.full_beats.append({
@@ -383,6 +433,19 @@ def start_story(
         visual_profile=_visual_profile_from_skeleton(skeleton, character, theme),
     )
 
+    session.record_llm_call(
+        stage="skeleton",
+        system=prompts["skeleton_system_prompt"],
+        user=build_skeleton_prompt(
+            character=character,
+            age_range=age_range,
+            theme=theme,
+            language=language,
+            max_beats=MAX_BEATS,
+            prompts=prompts,
+        ),
+    )
+
     messages = [
         {"role": "system", "content": prompts["system_prompt"]},
         {"role": "user", "content": build_first_beat_prompt(
@@ -396,6 +459,12 @@ def start_story(
     ]
 
     session.beat_number += 1
+    session.record_llm_call(
+        stage="beat",
+        system=messages[0]["content"],
+        user=messages[1]["content"],
+        beat_number=session.beat_number,
+    )
     return _generate_beat_with_retry(messages), session
 
 
@@ -418,4 +487,10 @@ def continue_story(
     ]
 
     session.beat_number += 1
+    session.record_llm_call(
+        stage="beat",
+        system=messages[0]["content"],
+        user=messages[1]["content"],
+        beat_number=session.beat_number,
+    )
     return _generate_beat_with_retry(messages), session

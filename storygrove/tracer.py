@@ -57,6 +57,11 @@ def _build_trace(session) -> dict:
         trace[f"beat_{n}_choices"] = " | ".join(beat.get("choices", []))
         trace[f"beat_{n}_choice_made"] = beat.get("choice_made") or ""
 
+    # nested TRL-format message triples — each llm_calls[i]["messages"] is a
+    # ready SFT example; flattening across traces gives training data with
+    # full train/inference parity (1 skeleton + 5 beat entries per story)
+    trace["llm_calls"] = session.build_trace_messages()
+
     return trace
 
 
