@@ -140,6 +140,7 @@ def _minimal_skeleton(character: str, theme: str, max_beats: int) -> dict:
         "paradigm": "Curiosity",
         "title": f"The story of {character}",
         "protagonist": character,
+        "character_appearance": character,
         "initial_trait": "uncertain",
         "initial_emotion": "curious",
         "main_conflict": f"a challenge related to {theme}",
@@ -158,13 +159,14 @@ def _minimal_skeleton(character: str, theme: str, max_beats: int) -> dict:
 
 
 def _visual_profile_from_skeleton(skeleton: dict, character: str, theme: str) -> str:
-    parts = [f"Character: {skeleton.get('protagonist', character)}"]
+    parts = []
+    appearance = skeleton.get("character_appearance") or skeleton.get("protagonist") or character
+    parts.append(f"Character appearance (never change between scenes): {appearance}")
     if skeleton.get("setting"):
         parts.append(f"Setting: {skeleton['setting']}")
     if skeleton.get("symbolic_object"):
         parts.append(f"Symbolic object: {skeleton['symbolic_object']}")
-    parts.append("Maintain consistent visual appearance and color palette across all scenes.")
-    return " ".join(parts)
+    return " | ".join(parts)
 
 
 # ── Skeleton Generator (Stage 1) ───────────────────────────────────────────────

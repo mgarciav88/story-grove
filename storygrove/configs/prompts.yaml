@@ -36,6 +36,9 @@ skeleton_prompt: |
     paradigm          — one of: Identity, Courage, Friendship, Responsibility, Curiosity
     title             — a provisional story title
     protagonist       — brief description of the main character
+    character_appearance — detailed visual description of how the character looks and is dressed
+                           (e.g. "a small brown rabbit wearing a yellow scarf and round glasses").
+                           This will be used to keep illustrations consistent across all beats.
     initial_trait     — the character's defining flaw or limiting belief at the start
     initial_emotion   — the character's starting emotional state
     main_conflict     — the central problem the character must face
@@ -130,7 +133,7 @@ final_beat_instruction: |
 
 image_prompt: |
   Children's book illustration of the following scene: {scene}
-  Visual reference for consistency: {visual_profile}
+  Character visual reference — keep this EXACTLY consistent across every illustration: {visual_profile}
   Style: colorful, warm, whimsical, watercolor.
   Important: original character designs only — do not reproduce any copyrighted or trademarked
   characters. If the story mentions a known fictional character, depict an original character
