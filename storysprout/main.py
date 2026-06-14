@@ -1,31 +1,67 @@
+import html as _html
+import base64
+from io import BytesIO
+
 import gradio as gr
 
 try:
     import spaces
     _gpu = spaces.GPU
 except ImportError:
-    _gpu = lambda fn: fn  # no-op for local dev
+    _gpu = lambda fn: fn
 
 from .narrator import narrate
 from .image_generator import generate_image
 from .story_generator import start_story, continue_story, StorySession
 from .prompts import load_prompts
+from .ui.theme import BOOK_CSS, theme as book_theme
 
-# ── Load config ────────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────────
 
 prompts = load_prompts()
 age_ranges = prompts["options"]["age_ranges"]
 languages = prompts["options"]["languages"]
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── Book page renderer ─────────────────────────────────────────────────────────
+
+def _book_page(narrative: str, image=None, is_odd: bool = True) -> str:
+    text_html = _html.escape(narrative).replace('\n', '<br>')
+
+    text_col = f'''
+        <div style="flex:1;min-width:0;font-family:'Lora',Georgia,serif;
+                    font-size:1.08em;line-height:1.9;color:#2C1810;padding:0 12px;">
+            {text_html}
+        </div>'''
+
+    if image is not None:
+        buf = BytesIO()
+        image.save(buf, format="JPEG", quality=85)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        img_col = f'''
+            <div style="flex:1;min-width:0;">
+                <img src="data:image/jpeg;base64,{b64}"
+                     style="width:100%;border-radius:4px;
+                            box-shadow:2px 4px 16px rgba(0,0,0,0.15);"/>
+            </div>'''
+    else:
+        img_col = '<div style="flex:1;min-width:0;"></div>'
+
+    left, right = (text_col, img_col) if is_odd else (img_col, text_col)
+
+    return f'''
+        <div style="display:flex;gap:40px;align-items:flex-start;
+                    background:#FDF6E3;padding:36px;border-radius:2px;
+                    box-shadow:0 4px 32px rgba(0,0,0,0.4),
+                               inset 4px 0 12px rgba(0,0,0,0.05);
+                    min-height:480px;">
+            {left}{right}
+        </div>'''
+
+
+# ── Stream helper ──────────────────────────────────────────────────────────────
 
 def _stream_and_narrate(generator):
-    """
-    Consume a beat generator, streaming narrative text.
-    Once complete, narrate the beat and generate an illustration.
-    Yields: (narrative, beat, audio, image)
-    """
     last_narrative = ""
     last_beat = None
 
@@ -40,49 +76,55 @@ def _stream_and_narrate(generator):
         yield last_narrative, last_beat, (sample_rate, wav), image
 
 
+# ── Output helpers ─────────────────────────────────────────────────────────────
+
+# outputs order: [story_tabs, status_msg, story_page, audio_output, choices_row, choice_selector, session_state]
+
 def _make_outputs(narrative, beat, audio, image, session):
-    """Build the tuple of Gradio output updates."""
-    if beat is None or beat.is_final:
-        story_text = narrative
-        if beat and beat.is_final:
-            story_text += "\n\n🌟 The End! What a wonderful adventure!"
-        return (
-            story_text,
-            gr.update(visible=False),
-            gr.update(choices=[]),
-            audio,
-            image,
-            session,
-        )
-    else:
-        return (
-            narrative,
-            gr.update(visible=True),
-            gr.update(choices=beat.choices, value=None),
-            audio,
-            image,
-            session,
-        )
+    is_odd = session.beat_number % 2 == 1
+    story_text = narrative
+    if beat and beat.is_final:
+        story_text += "\n\n🌟 The End! What a wonderful adventure!"
+    show_choices = beat is not None and not beat.is_final
+
+    return (
+        gr.update(selected="story"),
+        gr.update(value="", visible=False),
+        _book_page(story_text, image, is_odd),
+        audio,
+        gr.update(visible=show_choices),
+        gr.update(choices=beat.choices if show_choices else [], value=None),
+        session,
+    )
+
+
+def _loading(message: str):
+    return (
+        gr.update(selected="story"),
+        gr.update(value=message, visible=True),
+        "",
+        None,
+        gr.update(visible=False),
+        gr.update(choices=[]),
+        None,
+    )
 
 
 # ── Handlers ───────────────────────────────────────────────────────────────────
 
 @_gpu
-def on_start_story(character, age_range, theme, language):
+def on_start_story(character, age_range, theme_input, language):
     if not character.strip():
-        yield ("Please enter a character name.", gr.update(visible=False), gr.update(choices=[]), None, None, None)
-        return
+        raise gr.Error("Please enter a character name.")
+    if not theme_input.strip():
+        raise gr.Error("Please enter a story theme.")
 
-    if not theme.strip():
-        yield ("Please enter a story theme.", gr.update(visible=False), gr.update(choices=[]), None, None, None)
-        return
-
-    yield ("✨ Starting your story...", gr.update(visible=False), gr.update(choices=[]), None, None, None)
+    yield _loading("✨ Opening the book...")
 
     generator, session = start_story(
         character=character.strip(),
         age_range=age_range,
-        theme=theme.strip(),
+        theme=theme_input.strip(),
         language=languages[language],
     )
 
@@ -106,10 +148,17 @@ def on_start_story(character, age_range, theme, language):
 @_gpu
 def on_choice_selected(choice, session):
     if session is None:
-        yield ("No active story session. Please start a new story.", gr.update(visible=False), gr.update(choices=[]), None, None, None)
-        return
+        raise gr.Error("No active story. Please start a new story.")
 
-    yield (f"✨ You chose: {choice}\n\nContinuing the story...", gr.update(visible=False), gr.update(choices=[]), None, None, session)
+    yield (
+        gr.update(selected="story"),
+        gr.update(value=f"✨ {choice}…", visible=True),
+        gr.update(),
+        gr.update(),
+        gr.update(visible=False),
+        gr.update(choices=[]),
+        session,
+    )
 
     generator, session = continue_story(session=session, choice=choice)
 
@@ -130,61 +179,55 @@ def on_choice_selected(choice, session):
     yield _make_outputs(last_narrative, last_beat, last_audio, last_image, session)
 
 
-# ── UI ─────────────────────────────────────────────────────────────────────────
+# ── UI ──────────────────────────────────────────────────────────────────────────
 
-with gr.Blocks(title="StorySprout 🌱") as demo:
+with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StorySprout 🌱") as demo:
     session_state = gr.State(None)
 
-    gr.Markdown(
-        """
-        # 🌱 StorySprout
-        ### An interactive story just for you
-        """
-    )
+    with gr.Tabs(selected="cover") as story_tabs:
 
-    with gr.Row():
-        # ── Left column: controls ──────────────────────────────────────────────
-        with gr.Column(scale=1):
-            character_input = gr.Textbox(
-                label="Main Character",
-                placeholder="e.g. Luna the rabbit, a brave knight called Max...",
-                max_lines=1,
-            )
-            age_range_input = gr.Dropdown(
-                label="Age Range",
-                choices=age_ranges,
-                value=age_ranges[0],
-            )
-            theme_input = gr.Textbox(
-                label="Story Theme",
-                placeholder="e.g. making new friends, being brave in the dark...",
-                max_lines=2,
-            )
-            language_input = gr.Radio(
-                label="Language",
-                choices=list(languages.keys()),
-                value="English",
-            )
-            start_btn = gr.Button("✨ Begin Story", variant="primary", size="lg")
+        # ── Cover ──────────────────────────────────────────────────────────────
+        with gr.Tab(label="📖 New Story", id="cover"):
+            with gr.Column(elem_classes="cover-panel"):
+                gr.Markdown(
+                    "# 🌱 StorySprout\n### *An interactive story just for you*",
+                    elem_classes="cover-title",
+                )
+                character_input = gr.Textbox(
+                    label="Main Character",
+                    placeholder="e.g. Luna the rabbit, a brave knight called Max...",
+                    max_lines=1,
+                )
+                with gr.Row():
+                    age_range_input = gr.Dropdown(
+                        label="Age Range",
+                        choices=age_ranges,
+                        value=age_ranges[0],
+                        scale=1,
+                    )
+                    language_input = gr.Radio(
+                        label="Language",
+                        choices=list(languages.keys()),
+                        value="English",
+                        scale=2,
+                    )
+                theme_input = gr.Textbox(
+                    label="Story Theme",
+                    placeholder="e.g. making new friends, being brave in the dark...",
+                    max_lines=2,
+                )
+                start_btn = gr.Button("✨ Begin Story", variant="primary", size="lg")
 
-        # ── Right column: story output ─────────────────────────────────────────
-        with gr.Column(scale=2):
-            story_output = gr.Textbox(
-                label="Your Story",
-                lines=10,
-                interactive=False,
-                placeholder="Your story will appear here...",
-            )
-            image_output = gr.Image(
-                label="📖 Story Illustration",
-                type="pil",
-            )
+        # ── Story ──────────────────────────────────────────────────────────────
+        with gr.Tab(label="📚 Your Story", id="story"):
+            status_msg = gr.Markdown("", visible=False, elem_classes="status-msg")
+            story_page = gr.HTML("")
             audio_output = gr.Audio(
-                label="🔊 Listen to the story",
+                label="🔊 Listen",
                 type="numpy",
                 autoplay=True,
             )
-            with gr.Row(visible=False) as choices_row:
+            with gr.Row(visible=False, elem_classes="choices-area") as choices_row:
                 choice_selector = gr.Radio(
                     label="What happens next?",
                     choices=[],
@@ -192,9 +235,9 @@ with gr.Blocks(title="StorySprout 🌱") as demo:
                 )
                 choose_btn = gr.Button("→ Choose", variant="primary")
 
-    # ── Event handlers ─────────────────────────────────────────────────────────
+    # ── Wiring ─────────────────────────────────────────────────────────────────
 
-    _outputs = [story_output, choices_row, choice_selector, audio_output, image_output, session_state]
+    _outputs = [story_tabs, status_msg, story_page, audio_output, choices_row, choice_selector, session_state]
 
     start_btn.click(
         fn=on_start_story,
