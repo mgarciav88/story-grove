@@ -99,7 +99,7 @@ def _make_outputs(narrative, beat, audio, image, session, *, show_narrate: bool 
     story_text = narrative
     if beat and beat.is_final:
         story_text += "\n\n🌟 The End! What a wonderful adventure!"
-    show_choices = beat is not None and not beat.is_final
+    show_choices = beat is not None and not beat.is_final and session.beat_number < session.max_beats
 
     return (
         gr.update(selected="story"),
