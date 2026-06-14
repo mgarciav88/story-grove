@@ -32,7 +32,8 @@ skeleton_prompt: |
   - Language: {language}
   - Number of beats: {max_beats}
 
-  Return a JSON object with exactly these fields (all string values in {language}):
+  Return a JSON object with exactly these fields (all string values in {language}).
+  Invent original, creative names for all characters — avoid generic names like Pip, Willow, Luna, Max, or Lily:
     paradigm          — one of: Identity, Courage, Friendship, Responsibility, Curiosity
     title             — a provisional story title
     protagonist       — brief description of the main character
@@ -44,9 +45,9 @@ skeleton_prompt: |
     main_conflict     — the central problem the character must face
     external_goal     — what the character tries to achieve in the world
     internal_goal     — what the character truly needs emotionally
-    mentor            — name and role of a guide figure
-    ally              — name and role of a helper
-    antagonist        — name and role of the obstacle character or force
+    mentor            — name and role of a guide figure (invent a unique, specific name)
+    ally              — name and role of a helper (invent a unique, specific name)
+    antagonist        — name and role of the obstacle character or force (invent a unique, specific name)
     setting           — the world or place of the story
     symbolic_object   — an object representing the character's inner journey
     value_learned     — the core value the child reader takes away
