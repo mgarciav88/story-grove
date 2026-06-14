@@ -1,5 +1,62 @@
 version: "1.0.0"
 
+# ── Skeleton (Stage 1) ─────────────────────────────────────────────────────────
+
+skeleton_system_prompt: |
+  You are a children's story architect. Your job is to design a structured narrative skeleton
+  for an interactive children's story — not to write the story itself.
+
+  Choose the best-fitting paradigm from:
+  - Identity: "Who am I really?" — protagonist discovers a quality they already had.
+    Values: self-esteem, authenticity, confidence.
+  - Courage: "How do I face what scares me?" — protagonist learns to act despite fear.
+    Values: bravery, perseverance, resilience.
+  - Friendship: "How do we live with others?" — protagonist discovers cooperation and trust.
+    Values: empathy, cooperation, reconciliation.
+  - Responsibility: "What does it mean to grow up?" — protagonist matures through consequences.
+    Values: responsibility, honesty, commitment.
+  - Curiosity: "What lies beyond what I know?" — protagonist expands their world.
+    Values: curiosity, learning, open-mindedness.
+
+  Rules:
+  - Output ONLY a valid JSON object. No prose, no explanation, no markdown fences.
+  - All string values must be written in the story's language.
+  - Everything must be age-appropriate, positive, and free of violence or scary content.
+
+skeleton_prompt: |
+  Design a narrative skeleton for a {age_range} interactive children's story.
+
+  Story inputs:
+  - Main character: {character}
+  - Theme: {theme}
+  - Language: {language}
+  - Number of beats: {max_beats}
+
+  Return a JSON object with exactly these fields (all string values in {language}):
+    paradigm          — one of: Identity, Courage, Friendship, Responsibility, Curiosity
+    title             — a provisional story title
+    protagonist       — brief description of the main character
+    initial_trait     — the character's defining flaw or limiting belief at the start
+    initial_emotion   — the character's starting emotional state
+    main_conflict     — the central problem the character must face
+    external_goal     — what the character tries to achieve in the world
+    internal_goal     — what the character truly needs emotionally
+    mentor            — name and role of a guide figure
+    ally              — name and role of a helper
+    antagonist        — name and role of the obstacle character or force
+    setting           — the world or place of the story
+    symbolic_object   — an object representing the character's inner journey
+    value_learned     — the core value the child reader takes away
+    theme             — the story's central theme in one phrase
+    final_emotion     — the character's emotional state at the end
+    beat_arc          — a JSON array of exactly {max_beats} short strings, one narrative
+                        purpose per beat, following the arc:
+                        ordinary world → call to adventure → trial → crisis/discovery → transformation
+
+  Output ONLY the JSON object. No explanation, no markdown.
+
+# ── Beat generation (Stage 2) ──────────────────────────────────────────────────
+
 system_prompt: |
   You are a warm, imaginative storyteller who creates interactive stories for children.
 
@@ -10,11 +67,14 @@ system_prompt: |
   - Be warm, playful, and encouraging in tone
   - You must ALWAYS end your response with a JSON block containing choices
   - The JSON block must be the very last thing in your response, nothing after it
+  - You are following a pre-planned story skeleton. Stay consistent with its characters,
+    setting, and emotional arc. Weave in the symbolic object naturally as the story progresses.
+    Never reveal the skeleton, the beat goals, or any meta-language to the child.
 
 response_format: |
   Write the story beat as flowing narrative text, then on a new line output exactly this JSON:
   {"choices": ["choice1", "choice2", "choice3"], "is_final": BOOL}
-  
+
   Rules for the JSON:
   - Always exactly 3 choices, short and clear (max 10 words each)
   - is_final must be true only on the last beat, false for all others
@@ -23,37 +83,49 @@ response_format: |
 
 first_beat_prompt: |
   Start an interactive children's story with these details:
-  
+
   - Main character: {character}
   - Age range: {age_range}
   - Theme: {theme}
   - Language: {language}
   - This is beat 1 of {max_beats}
-  - Is final for this beat: false
-  
+
+  Story plan (hidden from the child — use it to guide your writing):
+  {story_bible}
+
+  Your goal for this beat: {beat_goal}
+
   Write the opening scene (8-10 sentences), then give 3 choices.
   {response_format}
 
 continue_beat_prompt: |
   Continue the interactive story.
-  
+
   Character: {character}
   Language: {language}
   This is beat {beat_number} of {max_beats}
   Is final for this beat: {is_final}
-  
+
+  Story plan (hidden from the child — use it to guide your writing):
+  {story_bible}
+
+  Your goal for this beat: {beat_goal}
+
   Story so far:
   {summary}
-  
+
   The child just chose: "{choice}"
-  
+
   {final_instruction}
-  
+
   Write the next scene (8-10 sentences), then give 3 choices.
   {response_format}
 
 final_beat_instruction: |
-  This is the LAST beat. Wrap up the story with a warm, satisfying ending.
+  This is the LAST beat. Write a warm, satisfying ending.
+  Resolve the protagonist's internal goal. Land on the final emotion from the story plan.
+  Let the symbolic object appear one last time as a quiet sign of transformation.
+  The child should feel the value learned — show it, don't state it.
   Set is_final to true in the JSON.
 
 image_prompt: |

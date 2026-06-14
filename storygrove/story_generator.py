@@ -10,7 +10,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStream
 from dotenv import load_dotenv
 
 from . import vram_manager
-from .prompts import load_prompts, build_first_beat_prompt, build_continue_beat_prompt
+from .prompts import load_prompts, build_skeleton_prompt, build_first_beat_prompt, build_continue_beat_prompt
 from .vram_manager import Model
 
 load_dotenv()
@@ -41,6 +41,7 @@ class StorySession:
     max_beats: int = MAX_BEATS
     image_seed: int = field(default_factory=lambda: random.randint(0, 2**32 - 1))
     visual_profile: str = ""
+    skeleton: dict = field(default_factory=dict)
 
     def add_beat(self, beat: str, choice: str):
         self.story_so_far.append(f"Beat {self.beat_number}: {beat[:120]}...")
@@ -103,6 +104,137 @@ vram_manager.register(Model.STORY, _loader, _unloader)
 def _get_model_and_tokenizer():
     vram_manager.request(Model.STORY)
     return vram_manager.get(Model.STORY)  # returns (model, tokenizer)
+
+
+def _extract_json(text: str) -> str:
+    """Strip markdown fences if present and extract the outermost JSON object."""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        end = len(lines)
+        for i in range(len(lines) - 1, 0, -1):
+            if lines[i].strip() == "```":
+                end = i
+                break
+        text = "\n".join(lines[1:end]).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        return text[start:end + 1]
+    return text
+
+
+def _default_beat_arc(max_beats: int) -> list[str]:
+    arc = [
+        "introduce the character and their ordinary world",
+        "the call to adventure and meeting the mentor",
+        "face the main trial and the antagonist",
+        "the crisis and moment of self-discovery",
+        "transformation, resolution, and return with the lesson",
+    ]
+    return arc[:max_beats]
+
+
+def _minimal_skeleton(character: str, theme: str, max_beats: int) -> dict:
+    return {
+        "paradigm": "Curiosity",
+        "title": f"The story of {character}",
+        "protagonist": character,
+        "initial_trait": "uncertain",
+        "initial_emotion": "curious",
+        "main_conflict": f"a challenge related to {theme}",
+        "external_goal": "complete the adventure",
+        "internal_goal": "grow and learn",
+        "mentor": "a wise friend",
+        "ally": "a loyal companion",
+        "antagonist": "an unexpected obstacle",
+        "setting": "a magical world",
+        "symbolic_object": "a special keepsake",
+        "value_learned": "courage and kindness",
+        "theme": theme,
+        "final_emotion": "joy and pride",
+        "beat_arc": _default_beat_arc(max_beats),
+    }
+
+
+def _visual_profile_from_skeleton(skeleton: dict, character: str, theme: str) -> str:
+    parts = [f"Character: {skeleton.get('protagonist', character)}"]
+    if skeleton.get("setting"):
+        parts.append(f"Setting: {skeleton['setting']}")
+    if skeleton.get("symbolic_object"):
+        parts.append(f"Symbolic object: {skeleton['symbolic_object']}")
+    parts.append("Maintain consistent visual appearance and color palette across all scenes.")
+    return " ".join(parts)
+
+
+# ── Skeleton Generator (Stage 1) ───────────────────────────────────────────────
+
+def generate_skeleton(
+    character: str,
+    age_range: str,
+    theme: str,
+    language: str,
+) -> dict:
+    """
+    Stage-1 non-streaming call: generates the narrative skeleton for the whole story.
+    Falls back to a minimal skeleton if the model output can't be parsed.
+    """
+    prompts = load_prompts()
+    model, tokenizer = _get_model_and_tokenizer()
+
+    messages = [
+        {"role": "system", "content": prompts["skeleton_system_prompt"]},
+        {"role": "user", "content": build_skeleton_prompt(
+            character=character,
+            age_range=age_range,
+            theme=theme,
+            language=language,
+            max_beats=MAX_BEATS,
+            prompts=prompts,
+        )},
+    ]
+
+    for attempt in range(2):
+        inputs = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            enable_thinking=False,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+        output_ids = model.generate(
+            **inputs,
+            max_new_tokens=512,
+            do_sample=False,
+        )
+        new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
+        raw = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+
+        try:
+            skeleton = json.loads(_extract_json(raw))
+            skeleton.setdefault("protagonist", character)
+            skeleton.setdefault("theme", theme)
+            beat_arc = skeleton.get("beat_arc", [])
+            if not isinstance(beat_arc, list) or len(beat_arc) != MAX_BEATS:
+                skeleton["beat_arc"] = _default_beat_arc(MAX_BEATS)
+            print(f"[StoryGrove] Skeleton ready — paradigm: {skeleton.get('paradigm', '?')}")
+            return skeleton
+        except (json.JSONDecodeError, ValueError, KeyError):
+            print(f"[StoryGrove] Skeleton parse failed (attempt {attempt + 1})")
+            if attempt == 0:
+                messages = messages + [
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": (
+                        "Your response was not valid JSON. "
+                        "Output only the JSON object, no explanation, no markdown."
+                    )},
+                ]
+
+    print("[StoryGrove] Using minimal fallback skeleton.")
+    return _minimal_skeleton(character, theme, MAX_BEATS)
 
 
 # ── Streaming Parser ───────────────────────────────────────────────────────────
@@ -225,17 +357,18 @@ def start_story(
     theme: str,
     language: str,
 ) -> tuple[Generator, StorySession]:
-    """Start a new story. Returns a generator and a fresh session."""
+    """Start a new story. Stage 1 generates the skeleton; Stage 2 streams the first beat."""
     prompts = load_prompts()
+
+    skeleton = generate_skeleton(character, age_range, theme, language)
+
     session = StorySession(
         character=character,
         age_range=age_range,
         theme=theme,
         language=language,
-        visual_profile=(
-            f"Main character: {character}. Story theme: {theme}. "
-            "Keep the character's appearance and color palette consistent across all scenes."
-        ),
+        skeleton=skeleton,
+        visual_profile=_visual_profile_from_skeleton(skeleton, character, theme),
     )
 
     messages = [
@@ -246,6 +379,7 @@ def start_story(
             theme=theme,
             language=language,
             prompts=prompts,
+            skeleton=skeleton,
         )},
     ]
 

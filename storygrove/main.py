@@ -150,7 +150,7 @@ def on_start_story(character, age_range, theme_input, language):
     if not theme_input.strip():
         raise gr.Error("Please enter a story theme.")
 
-    yield _loading("✨ Opening the book...")
+    yield _loading("✨ Dreaming up your story...")
 
     generator, session = start_story(
         character=character.strip(),
