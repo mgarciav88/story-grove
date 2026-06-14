@@ -65,7 +65,7 @@ def _book_page(narrative: str, image=None, is_odd: bool = True) -> str:
 
 # ── Stream helper ──────────────────────────────────────────────────────────────
 
-def _generate_image_and_audio(narrative: str):
+def _generate_image_and_audio(narrative: str, session: StorySession):
     """
     Generator that yields (image, audio) twice:
       1st yield: image ready, audio=None (still generating)
@@ -76,20 +76,20 @@ def _generate_image_and_audio(narrative: str):
         vram_manager.request(Model.IMAGE)
         vram_manager.request(Model.NARRATOR)
         with ThreadPoolExecutor(max_workers=2) as executor:
-            future_image = executor.submit(generate_image, narrative)
+            future_image = executor.submit(generate_image, narrative, session.visual_profile, session.image_seed)
             future_audio = executor.submit(narrate, narrative)
             image = future_image.result()
             yield image, None
             audio = future_audio.result()
         yield image, audio
     else:
-        image = generate_image(narrative)
+        image = generate_image(narrative, session.visual_profile, session.image_seed)
         yield image, None
         audio = narrate(narrative)
         yield image, audio
 
 
-def _stream_and_narrate(generator):
+def _stream_and_narrate(generator, session: StorySession):
     last_narrative = ""
     last_beat = None
 
@@ -99,7 +99,7 @@ def _stream_and_narrate(generator):
         yield narrative, None, None, None
 
     if last_narrative:
-        for image, audio in _generate_image_and_audio(last_narrative):
+        for image, audio in _generate_image_and_audio(last_narrative, session):
             if audio is None:
                 yield last_narrative, last_beat, None, image
                 time.sleep(1)
@@ -164,7 +164,7 @@ def on_start_story(character, age_range, theme_input, language):
     last_audio = None
     last_image = None
 
-    for narrative, beat, audio, image in _stream_and_narrate(generator):
+    for narrative, beat, audio, image in _stream_and_narrate(generator, session):
         last_narrative = narrative
         last_beat = beat
         if audio is not None:
@@ -198,7 +198,7 @@ def on_choice_selected(choice, session):
     last_audio = None
     last_image = None
 
-    for narrative, beat, audio, image in _stream_and_narrate(generator):
+    for narrative, beat, audio, image in _stream_and_narrate(generator, session):
         last_narrative = narrative
         last_beat = beat
         if audio is not None:

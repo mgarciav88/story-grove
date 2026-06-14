@@ -1,5 +1,6 @@
 import os
 import json
+import random
 import torch
 from dataclasses import dataclass, field
 from typing import Optional, Generator
@@ -38,6 +39,8 @@ class StorySession:
     beat_number: int = 0
     story_so_far: list[str] = field(default_factory=list)
     max_beats: int = MAX_BEATS
+    image_seed: int = field(default_factory=lambda: random.randint(0, 2**32 - 1))
+    visual_profile: str = ""
 
     def add_beat(self, beat: str, choice: str):
         self.story_so_far.append(f"Beat {self.beat_number}: {beat[:120]}...")
@@ -229,6 +232,10 @@ def start_story(
         age_range=age_range,
         theme=theme,
         language=language,
+        visual_profile=(
+            f"Main character: {character}. Story theme: {theme}. "
+            "Keep the character's appearance and color palette consistent across all scenes."
+        ),
     )
 
     messages = [

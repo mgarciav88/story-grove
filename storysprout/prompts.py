@@ -1,18 +1,20 @@
 from pathlib import Path
 import yaml
 
+
 def load_prompts(
-    path: Path = Path(__file__).parent / "configs" / "prompts.yaml"
+        path: Path = Path(__file__).parent / "configs" / "prompts.yaml"
 ) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
 
+
 def build_first_beat_prompt(
-    character: str,
-    age_range: str,
-    theme: str,
-    language: str,
-    prompts: dict,
+        character: str,
+        age_range: str,
+        theme: str,
+        language: str,
+        prompts: dict,
 ) -> str:
     return prompts["first_beat_prompt"].format(
         character=character,
@@ -23,11 +25,17 @@ def build_first_beat_prompt(
         response_format=prompts["response_format"],
     )
 
+
+def build_image_prompt(narrative: str, visual_profile: str, prompts: dict) -> str:
+    scene = narrative[:350].strip().rstrip(".")
+    return prompts["image_prompt"].format(scene=scene, visual_profile=visual_profile)
+
+
 def build_continue_beat_prompt(
-    session,  # StorySession
-    choice: str,
-    is_final: bool,
-    prompts: dict,
+        session,  # StorySession
+        choice: str,
+        is_final: bool,
+        prompts: dict,
 ) -> str:
     final_instruction = (
         prompts["final_beat_instruction"] if is_final else ""
