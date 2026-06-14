@@ -287,7 +287,7 @@ def generate_skeleton(
             print(f"[StoryGrove] Skeleton ready — paradigm: {skeleton.get('paradigm', '?')}")
             return skeleton
         except (json.JSONDecodeError, ValueError, KeyError):
-            print(f"[StoryGrove] Skeleton parse failed (attempt {attempt + 1})")
+            print(f"[StoryGrove] Skeleton parse failed (attempt {attempt + 1}):\n{raw}")
             if attempt == 0:
                 messages = messages + [
                     {"role": "assistant", "content": raw},
