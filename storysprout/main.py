@@ -1,5 +1,7 @@
 import html as _html
 import base64
+import time
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 import gradio as gr
@@ -71,8 +73,15 @@ def _stream_and_narrate(generator):
         yield narrative, None, None, None
 
     if last_narrative:
-        sample_rate, wav = narrate(last_narrative)
-        image = generate_image(last_narrative)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_image = executor.submit(generate_image, last_narrative)
+            future_audio = executor.submit(narrate, last_narrative)
+
+            image = future_image.result()
+            time.sleep(1)
+            yield last_narrative, last_beat, None, image
+
+            sample_rate, wav = future_audio.result()
         yield last_narrative, last_beat, (sample_rate, wav), image
 
 
