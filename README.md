@@ -1,5 +1,5 @@
 ---
-title: Kids Story Builder
+title: StoryGrove
 emoji: 📚
 colorFrom: blue
 colorTo: green

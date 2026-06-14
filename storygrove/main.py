@@ -212,7 +212,7 @@ def on_choice_selected(choice, session):
 
 # ── UI ──────────────────────────────────────────────────────────────────────────
 
-with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StorySprout 🌱") as demo:
+with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
     session_state = gr.State(None)
 
     with gr.Tabs(selected="cover") as story_tabs:
@@ -221,7 +221,7 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StorySprout 🌱") as demo
         with gr.Tab(label="📖 New Story", id="cover"):
             with gr.Column(elem_classes="cover-panel"):
                 gr.Markdown(
-                    "# 🌱 StorySprout\n### *An interactive story just for you*",
+                    "# 🌳 StoryGrove\n### *An interactive story just for you*",
                     elem_classes="cover-title",
                 )
                 character_input = gr.Textbox(
