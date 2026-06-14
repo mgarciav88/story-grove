@@ -17,7 +17,7 @@ from .image_generator import generate_image
 from .story_generator import start_story, continue_story, StorySession
 from .prompts import load_prompts
 from .ui.theme import BOOK_CSS, theme as book_theme
-from . import vram_manager
+from . import vram_manager, tracer
 from .vram_manager import Model, VRAM_SWAP
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -173,6 +173,11 @@ def on_start_story(character, age_range, theme_input, language):
             last_image = image
         yield _make_outputs(narrative, beat, audio, image, session)
 
+    if last_beat is not None:
+        session.record_full_beat(last_narrative, last_beat.choices, last_beat.is_final)
+        if last_beat.is_final:
+            tracer.push_async(session)
+
     yield _make_outputs(last_narrative, last_beat, last_audio, last_image, session)
 
 
@@ -180,6 +185,9 @@ def on_start_story(character, age_range, theme_input, language):
 def on_choice_selected(choice, session):
     if session is None:
         raise gr.Error("No active story. Please start a new story.")
+
+    if session.full_beats:
+        session.full_beats[-1]["choice_made"] = choice
 
     yield (
         gr.update(selected="story"),
@@ -206,6 +214,11 @@ def on_choice_selected(choice, session):
         if image is not None:
             last_image = image
         yield _make_outputs(narrative, beat, audio, image, session)
+
+    if last_beat is not None:
+        session.record_full_beat(last_narrative, last_beat.choices, last_beat.is_final)
+        if last_beat.is_final:
+            tracer.push_async(session)
 
     yield _make_outputs(last_narrative, last_beat, last_audio, last_image, session)
 

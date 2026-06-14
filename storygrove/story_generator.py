@@ -42,10 +42,20 @@ class StorySession:
     image_seed: int = field(default_factory=lambda: random.randint(0, 2**32 - 1))
     visual_profile: str = ""
     skeleton: dict = field(default_factory=dict)
+    full_beats: list = field(default_factory=list)
 
     def add_beat(self, beat: str, choice: str):
         self.story_so_far.append(f"Beat {self.beat_number}: {beat[:120]}...")
         self.story_so_far.append(f"Child chose: {choice}")
+
+    def record_full_beat(self, narrative: str, choices: list, is_final: bool) -> None:
+        self.full_beats.append({
+            "beat_number": self.beat_number,
+            "narrative": narrative,
+            "choices": choices,
+            "choice_made": None,
+            "is_final": is_final,
+        })
 
     def is_final_beat(self) -> bool:
         return self.beat_number >= self.max_beats - 1
