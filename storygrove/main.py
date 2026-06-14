@@ -105,7 +105,7 @@ def _make_outputs(narrative, beat, audio, image, session, *, show_narrate: bool 
         gr.update(selected="story"),
         gr.update(value="", visible=False),
         _book_page(story_text, image, is_odd),
-        audio,
+        gr.update(value=None, visible=False),
         gr.update(visible=show_choices),
         gr.update(choices=beat.choices if show_choices else [], value=None),
         session,
@@ -118,7 +118,7 @@ def _loading(message: str):
         gr.update(selected="story"),
         gr.update(value=message, visible=True),
         "",
-        None,
+        gr.update(value=None, visible=False),
         gr.update(visible=False),
         gr.update(choices=[]),
         None,
@@ -138,7 +138,7 @@ def on_narrate(session):
     yield (
         gr.update(value="🎙️ Generating narration…", interactive=False),
         gr.update(value="🎙️ Conjuring a voice for this page…", visible=True),
-        None,
+        gr.update(visible=False),
     )
 
     audio = narrate(narrative)
@@ -146,7 +146,7 @@ def on_narrate(session):
     yield (
         gr.update(value="🔊 Listen to this page", interactive=True),
         gr.update(value="", visible=False),
-        audio,
+        gr.update(value=audio, visible=True),
     )
 
 
@@ -199,7 +199,7 @@ def on_choice_selected(choice, session):
         gr.update(selected="story"),
         gr.update(value=f"✨ {choice}…", visible=True),
         gr.update(),
-        None,
+        gr.update(value=None, visible=False),
         gr.update(visible=False),
         gr.update(choices=[]),
         session,
@@ -269,6 +269,7 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
                 label="🔊 Listen",
                 type="numpy",
                 autoplay=True,
+                visible=False,
             )
             narrate_btn = gr.Button("🔊 Listen to this page", visible=False)
             narrate_status = gr.Markdown("", visible=False, elem_classes="status-msg")
