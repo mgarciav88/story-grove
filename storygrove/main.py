@@ -1,7 +1,5 @@
 import html as _html
 import base64
-import time
-from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 import gradio as gr
@@ -18,7 +16,7 @@ from .story_generator import start_story, continue_story, StorySession
 from .prompts import load_prompts
 from .ui.theme import BOOK_CSS, theme as book_theme
 from . import vram_manager, tracer
-from .vram_manager import Model, VRAM_SWAP
+from .vram_manager import Model
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -63,55 +61,40 @@ def _book_page(narrative: str, image=None, is_odd: bool = True) -> str:
         </div>'''
 
 
-# ── Stream helper ──────────────────────────────────────────────────────────────
+# ── Stream helpers ─────────────────────────────────────────────────────────────
 
-def _generate_image_and_audio(narrative: str, session: StorySession):
+def _generate_image(narrative: str, session: StorySession):
+    """Generate illustration for the current beat."""
+    vram_manager.request(Model.IMAGE)
+    return generate_image(narrative, session.visual_profile, session.image_seed)
+
+
+def _stream_and_image(generator, session: StorySession):
     """
-    Generator that yields (image, audio) twice:
-      1st yield: image ready, audio=None (still generating)
-      2nd yield: audio ready
-    Parallel when models coexist in VRAM, sequential otherwise.
+    Generator that yields (narrative, beat, image) triples.
+    Streams text first (image=None), then yields once more with the image.
+    Audio is no longer generated here — it is user-triggered.
     """
-    if not VRAM_SWAP:
-        vram_manager.request(Model.IMAGE)
-        vram_manager.request(Model.NARRATOR)
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_image = executor.submit(generate_image, narrative, session.visual_profile, session.image_seed)
-            future_audio = executor.submit(narrate, narrative)
-            image = future_image.result()
-            yield image, None
-            audio = future_audio.result()
-        yield image, audio
-    else:
-        image = generate_image(narrative, session.visual_profile, session.image_seed)
-        yield image, None
-        audio = narrate(narrative)
-        yield image, audio
-
-
-def _stream_and_narrate(generator, session: StorySession):
     last_narrative = ""
     last_beat = None
 
     for narrative, beat in generator:
         last_narrative = narrative
         last_beat = beat
-        yield narrative, None, None, None
+        yield narrative, None, None
 
     if last_narrative:
-        for image, audio in _generate_image_and_audio(last_narrative, session):
-            if audio is None:
-                yield last_narrative, last_beat, None, image
-                time.sleep(1)
-            else:
-                yield last_narrative, last_beat, audio, image
+        image = _generate_image(last_narrative, session)
+        yield last_narrative, last_beat, image
 
 
 # ── Output helpers ─────────────────────────────────────────────────────────────
 
-# outputs order: [story_tabs, status_msg, story_page, audio_output, choices_row, choice_selector, session_state]
+# outputs order:
+#   [story_tabs, status_msg, story_page, audio_output,
+#    choices_row, choice_selector, session_state, narrate_btn]
 
-def _make_outputs(narrative, beat, audio, image, session):
+def _make_outputs(narrative, beat, audio, image, session, *, show_narrate: bool = False):
     is_odd = session.beat_number % 2 == 1
     story_text = narrative
     if beat and beat.is_final:
@@ -126,6 +109,7 @@ def _make_outputs(narrative, beat, audio, image, session):
         gr.update(visible=show_choices),
         gr.update(choices=beat.choices if show_choices else [], value=None),
         session,
+        gr.update(visible=show_narrate, value="🔊 Listen to this page", interactive=True),
     )
 
 
@@ -138,10 +122,35 @@ def _loading(message: str):
         gr.update(visible=False),
         gr.update(choices=[]),
         None,
+        gr.update(visible=False),
     )
 
 
-# ── Handlers ───────────────────────────────────────────────────────────────────
+# ── Narration handler (user-triggered) ─────────────────────────────────────────
+
+@_gpu
+def on_narrate(session):
+    if session is None or not session.full_beats:
+        raise gr.Error("No story page to narrate yet.")
+
+    narrative = session.full_beats[-1]["narrative"]
+
+    yield (
+        gr.update(value="🎙️ Generating narration…", interactive=False),
+        gr.update(value="🎙️ Conjuring a voice for this page…", visible=True),
+        None,
+    )
+
+    audio = narrate(narrative)
+
+    yield (
+        gr.update(value="🔊 Listen to this page", interactive=True),
+        gr.update(value="", visible=False),
+        audio,
+    )
+
+
+# ── Story handlers ─────────────────────────────────────────────────────────────
 
 @_gpu
 def on_start_story(character, age_range, theme_input, language):
@@ -161,24 +170,21 @@ def on_start_story(character, age_range, theme_input, language):
 
     last_narrative = ""
     last_beat = None
-    last_audio = None
     last_image = None
 
-    for narrative, beat, audio, image in _stream_and_narrate(generator, session):
+    for narrative, beat, image in _stream_and_image(generator, session):
         last_narrative = narrative
         last_beat = beat
-        if audio is not None:
-            last_audio = audio
         if image is not None:
             last_image = image
-        yield _make_outputs(narrative, beat, audio, image, session)
+        yield _make_outputs(narrative, beat, None, image, session)
 
     if last_beat is not None:
         session.record_full_beat(last_narrative, last_beat.choices, last_beat.is_final)
         if last_beat.is_final:
             tracer.push_async(session)
 
-    yield _make_outputs(last_narrative, last_beat, last_audio, last_image, session)
+    yield _make_outputs(last_narrative, last_beat, None, last_image, session, show_narrate=True)
 
 
 @_gpu
@@ -193,34 +199,32 @@ def on_choice_selected(choice, session):
         gr.update(selected="story"),
         gr.update(value=f"✨ {choice}…", visible=True),
         gr.update(),
-        gr.update(),
+        None,
         gr.update(visible=False),
         gr.update(choices=[]),
         session,
+        gr.update(visible=False),
     )
 
     generator, session = continue_story(session=session, choice=choice)
 
     last_narrative = ""
     last_beat = None
-    last_audio = None
     last_image = None
 
-    for narrative, beat, audio, image in _stream_and_narrate(generator, session):
+    for narrative, beat, image in _stream_and_image(generator, session):
         last_narrative = narrative
         last_beat = beat
-        if audio is not None:
-            last_audio = audio
         if image is not None:
             last_image = image
-        yield _make_outputs(narrative, beat, audio, image, session)
+        yield _make_outputs(narrative, beat, None, image, session)
 
     if last_beat is not None:
         session.record_full_beat(last_narrative, last_beat.choices, last_beat.is_final)
         if last_beat.is_final:
             tracer.push_async(session)
 
-    yield _make_outputs(last_narrative, last_beat, last_audio, last_image, session)
+    yield _make_outputs(last_narrative, last_beat, None, last_image, session, show_narrate=True)
 
 
 # ── UI ──────────────────────────────────────────────────────────────────────────
@@ -249,12 +253,7 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
                         value=age_ranges[0],
                         scale=1,
                     )
-                    language_input = gr.Radio(
-                        label="Language",
-                        choices=list(languages.keys()),
-                        value="English",
-                        scale=2,
-                    )
+                language_input = gr.State("English")
                 theme_input = gr.Textbox(
                     label="Story Theme",
                     placeholder="e.g. making new friends, being brave in the dark...",
@@ -271,6 +270,8 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
                 type="numpy",
                 autoplay=True,
             )
+            narrate_btn = gr.Button("🔊 Listen to this page", visible=False)
+            narrate_status = gr.Markdown("", visible=False, elem_classes="status-msg")
             with gr.Row(visible=False, elem_classes="choices-area") as choices_row:
                 choice_selector = gr.Radio(
                     label="What happens next?",
@@ -281,7 +282,10 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
 
     # ── Wiring ─────────────────────────────────────────────────────────────────
 
-    _outputs = [story_tabs, status_msg, story_page, audio_output, choices_row, choice_selector, session_state]
+    _outputs = [
+        story_tabs, status_msg, story_page, audio_output,
+        choices_row, choice_selector, session_state, narrate_btn,
+    ]
 
     start_btn.click(
         fn=on_start_story,
@@ -293,6 +297,12 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
         fn=on_choice_selected,
         inputs=[choice_selector, session_state],
         outputs=_outputs,
+    )
+
+    narrate_btn.click(
+        fn=on_narrate,
+        inputs=[session_state],
+        outputs=[narrate_btn, narrate_status, audio_output],
     )
 
 
