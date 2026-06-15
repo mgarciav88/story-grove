@@ -44,6 +44,17 @@ BOOK_CSS = """
     box-shadow: 0 4px 32px rgba(0,0,0,0.4) !important;
 }
 
+/* ── Llama disclaimer ─────────────────────────────────────────────────────── */
+.llama-disclaimer p, .llama-disclaimer blockquote, .llama-disclaimer li {
+    color: #F5DEB3 !important;
+    background: rgba(0,0,0,0.25) !important;
+    border-left: 3px solid #D2A679 !important;
+    border-radius: 4px !important;
+    padding: 10px 14px !important;
+    font-size: 0.88em !important;
+    margin: 0 !important;
+}
+
 /* ── Choices ──────────────────────────────────────────────────────────────── */
 .choices-area {
     background: #F5EDD5 !important;
