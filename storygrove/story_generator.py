@@ -153,7 +153,6 @@ def _unloader(instance: tuple):
     model, tokenizer = instance
     del model
     del tokenizer
-    import gc
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
@@ -296,10 +295,12 @@ def generate_skeleton(
     age_range: str,
     theme: str,
     language: str,
+    llm=None,
 ) -> dict:
     """
     Stage-1 non-streaming call: generates the narrative skeleton for the whole story.
     Falls back to a minimal skeleton if the model output can't be parsed.
+    Pass a pre-loaded llm to share it with beat generation (avoids double-Llama CUDA issues).
     """
     prompts = load_prompts()
 
@@ -316,13 +317,13 @@ def generate_skeleton(
     ]
 
     if GGUF_MODEL_PATH:
-        llm = _load_llama()
+        _llm = llm or _load_llama()
     else:
         model, tokenizer = _get_model_and_tokenizer()
 
     for attempt in range(2):
         if GGUF_MODEL_PATH:
-            response = llm.create_chat_completion(
+            response = _llm.create_chat_completion(
                 messages=messages,
                 max_tokens=1024,
                 temperature=0.7,
@@ -357,9 +358,6 @@ def generate_skeleton(
             if not isinstance(beat_arc, list) or len(beat_arc) != MAX_BEATS:
                 skeleton["beat_arc"] = _default_beat_arc(MAX_BEATS)
             print(f"[StoryGrove] Skeleton ready — paradigm: {skeleton.get('paradigm', '?')}")
-            if GGUF_MODEL_PATH:
-                del llm
-                gc.collect()
             return skeleton
         except (json.JSONDecodeError, ValueError, KeyError):
             print(f"[StoryGrove] Skeleton parse failed (attempt {attempt + 1}):\n{raw}")
@@ -373,9 +371,6 @@ def generate_skeleton(
                 ]
 
     print("[StoryGrove] Using minimal fallback skeleton.")
-    if GGUF_MODEL_PATH:
-        del llm
-        gc.collect()
     return _minimal_skeleton(character, theme, MAX_BEATS)
 
 
@@ -413,17 +408,19 @@ def parse_streaming_response(full_text: str) -> tuple[str, Optional[StoryBeat]]:
 
 def _stream_beat(
     messages: list[dict],
-    max_new_tokens: int = 2048
+    max_new_tokens: int = 2048,
+    llm=None,
 ) -> Generator[tuple[str, Optional[StoryBeat]], None, None]:
     """
     Streams (narrative_text, StoryBeat_or_None) tuples.
     narrative_text grows with each token.
     StoryBeat becomes non-None once JSON is fully parsed.
+    Pass llm to reuse a Llama already loaded for skeleton (avoids double-Llama CUDA issues).
     """
     if GGUF_MODEL_PATH:
-        llm = _load_llama()
+        _llm = llm or _load_llama()
         full_text = ""
-        for chunk in llm.create_chat_completion(
+        for chunk in _llm.create_chat_completion(
             messages=messages,
             max_tokens=max_new_tokens,
             temperature=0.8,
@@ -477,6 +474,7 @@ def _stream_beat(
 def _generate_beat_with_retry(
     messages: list[dict],
     max_retries: int = 3,
+    llm=None,
 ) -> Generator[tuple[str, Optional[StoryBeat]], None, None]:
     """
     Wraps _stream_beat with retry logic.
@@ -486,7 +484,7 @@ def _generate_beat_with_retry(
         last_narrative = ""
         last_beat = None
 
-        for narrative, beat in _stream_beat(messages):
+        for narrative, beat in _stream_beat(messages, llm=llm):
             last_narrative = narrative
             last_beat = beat
             yield narrative, beat
@@ -518,7 +516,11 @@ def start_story(
     """Start a new story. Stage 1 generates the skeleton; Stage 2 streams the first beat."""
     prompts = load_prompts()
 
-    skeleton = generate_skeleton(character, age_range, theme, language)
+    # Load Llama once and share it across skeleton + beat 1 to avoid double-Llama CUDA crashes.
+    # The generator closure keeps llm alive until on_start_story finishes iterating it.
+    llm = _load_llama() if GGUF_MODEL_PATH else None
+
+    skeleton = generate_skeleton(character, age_range, theme, language, llm=llm)
 
     session = StorySession(
         character=character,
@@ -561,7 +563,7 @@ def start_story(
         user=messages[1]["content"],
         beat_number=session.beat_number,
     )
-    return _generate_beat_with_retry(messages), session
+    return _generate_beat_with_retry(messages, llm=llm), session
 
 
 def continue_story(
