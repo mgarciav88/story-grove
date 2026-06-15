@@ -52,6 +52,18 @@ StoryGrove ships with a UI toggle that switches inference from Transformers to *
 
 ---
 
+## 🎬 Demo
+
+[![StoryGrove Demo](https://img.youtube.com/vi/zEteDr6cCPE/0.jpg)](https://youtu.be/zEteDr6cCPE)
+
+---
+
+## 📣 Social Post
+
+[Threads post](https://www.threads.com/@migarciav/post/DZoBh1tCPvo)
+
+---
+
 ## 📓 Field Notes
 
 Full write-up covering the architecture, fine-tuning process, eval results, and lessons learned:
