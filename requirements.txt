@@ -1,9 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
 accelerate>=1.13.0
 bitsandbytes>=0.49.2
-llama-cpp-python>=0.3.0
 diffusers @ git+https://github.com/huggingface/diffusers.git
 gradio>=6.16.0
 huggingface-hub>=1.18.0
+llama-cpp-python
 Pillow>=10.0.0
 python-dotenv>=1.2.2
 pyyaml>=6.0.3

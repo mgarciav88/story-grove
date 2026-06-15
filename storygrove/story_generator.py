@@ -158,36 +158,9 @@ def _unloader(instance: tuple):
     torch.cuda.ipc_collect()
 
 
-def _llama_loader():
-    """Load GGUF model via llama-cpp-python. GGUF_MODEL_PATH may be a local path or HF repo ID."""
-    from llama_cpp import Llama
-
-    model_path = GGUF_MODEL_PATH
-    if not model_path.startswith("/") and "/" in model_path:
-        from huggingface_hub import HfApi, hf_hub_download
-        api = HfApi(token=HF_TOKEN)
-        gguf_files = [f.rfilename for f in api.list_repo_tree(model_path, token=HF_TOKEN) if f.rfilename.endswith(".gguf")]
-        if not gguf_files:
-            raise FileNotFoundError(f"No .gguf file found in HF repo {model_path}")
-        print(f"[StoryGrove] Downloading GGUF: {model_path}/{gguf_files[0]}")
-        model_path = hf_hub_download(repo_id=model_path, filename=gguf_files[0], token=HF_TOKEN)
-
-    print(f"[StoryGrove] Loading GGUF model: {model_path}")
-    return Llama(model_path=model_path, n_ctx=4096, n_gpu_layers=-1, verbose=False)
-
-
-def _llama_unloader(llm):
-    del llm
-    import gc
-    gc.collect()
-
-
 # ── Register with VRAM manager ─────────────────────────────────────────────────
 
-if GGUF_MODEL_PATH:
-    vram_manager.register(Model.STORY, _llama_loader, _llama_unloader)
-else:
-    vram_manager.register(Model.STORY, _loader, _unloader)
+vram_manager.register(Model.STORY, _loader, _unloader)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -197,9 +170,38 @@ def _get_model_and_tokenizer():
     return vram_manager.get(Model.STORY)  # returns (model, tokenizer)
 
 
-def _get_llama():
-    vram_manager.request(Model.STORY)
-    return vram_manager.get(Model.STORY)
+_gguf_local_path: str | None = None
+
+def _ensure_gguf_path() -> str:
+    """Resolve and cache the local GGUF file path. Download from HF if needed.
+    Safe to call outside a GPU context — only downloads, does not load into GPU."""
+    global _gguf_local_path
+    if _gguf_local_path is not None:
+        return _gguf_local_path
+    path = GGUF_MODEL_PATH
+    if not path.startswith("/") and "/" in path:
+        from huggingface_hub import HfApi, hf_hub_download
+        api = HfApi(token=HF_TOKEN)
+        gguf_files = [
+            f.rfilename for f in api.list_repo_tree(path, token=HF_TOKEN)
+            if f.rfilename.endswith(".gguf")
+        ]
+        if not gguf_files:
+            raise FileNotFoundError(f"No .gguf file found in HF repo {path}")
+        print(f"[StoryGrove] Downloading GGUF: {path}/{gguf_files[0]}")
+        path = hf_hub_download(repo_id=path, filename=gguf_files[0], token=HF_TOKEN)
+    _gguf_local_path = path
+    return path
+
+
+def _load_llama():
+    """Create a fresh Llama instance from the cached local path.
+    Must be called inside a @spaces.GPU context — ZeroGPU releases VRAM after each call,
+    so we cannot cache the Llama object across calls."""
+    from llama_cpp import Llama
+    path = _ensure_gguf_path()
+    print(f"[StoryGrove] Loading GGUF: {path}")
+    return Llama(model_path=path, n_gpu_layers=-1, n_ctx=4096, verbose=False)
 
 
 def _extract_json(text: str) -> str:
@@ -292,7 +294,7 @@ def generate_skeleton(
     ]
 
     if GGUF_MODEL_PATH:
-        llm = _get_llama()
+        llm = _load_llama()
     else:
         model, tokenizer = _get_model_and_tokenizer()
 
@@ -391,7 +393,7 @@ def _stream_beat(
     StoryBeat becomes non-None once JSON is fully parsed.
     """
     if GGUF_MODEL_PATH:
-        llm = _get_llama()
+        llm = _load_llama()
         full_text = ""
         for chunk in llm.create_chat_completion(
             messages=messages,
