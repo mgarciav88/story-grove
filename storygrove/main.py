@@ -83,8 +83,8 @@ def _stream_and_image(generator, session: StorySession):
         last_beat = beat
         yield narrative, None, None
 
-    if last_narrative and not session.use_gguf:
-        image = _generate_image(last_narrative, session)
+    if last_narrative:
+        image = _generate_image(last_narrative, session) if not session.use_gguf else None
         yield last_narrative, last_beat, image
 
 
