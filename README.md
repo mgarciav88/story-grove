@@ -110,10 +110,10 @@ The headline result: the base model fails to produce valid skeleton JSON on the 
 ## Models Used
 
 | Role | Model | Size |
-|------|-------|------|
-| Story generation | `build-small-hackathon/storygrove-gemma-3-4b` (fine-tuned Gemma 3) | 4B |
-| Image generation | Flux-2-Klein (via diffusers) | — |
-| Voice narration | VoxCPM2 | — |
+|------|-------|-----|
+| Story generation | `build-small-hackathon/storygrove-gemma-3-4b` (fine-tuned Gemma 3) | 4B  |
+| Image generation | Flux-2-Klein (via diffusers) | 4B  |
+| Voice narration | VoxCPM2 | 2B  |
 | GGUF inference | `storygrove-gemma-3-4b-gguf` Q4_K_M | 2.49 GB |
 
 ---
