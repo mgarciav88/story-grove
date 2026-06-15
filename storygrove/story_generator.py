@@ -198,6 +198,16 @@ def _load_llama():
     """Create a fresh Llama instance from the cached local path.
     Must be called inside a @spaces.GPU context — ZeroGPU releases VRAM after each call,
     so we cannot cache the Llama object across calls."""
+    import ctypes, os
+    # PyPI torch bundles libcudart but loads it with RTLD_LOCAL, so llama_cpp's native
+    # lib can't find it via the normal linker search. Re-load it with RTLD_GLOBAL first.
+    torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+    for name in ("libcudart.so.12", "libcudart.so"):
+        candidate = os.path.join(torch_lib, name)
+        if os.path.exists(candidate):
+            ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
+            break
+
     from llama_cpp import Llama
     path = _ensure_gguf_path()
     print(f"[StoryGrove] Loading GGUF: {path}")
