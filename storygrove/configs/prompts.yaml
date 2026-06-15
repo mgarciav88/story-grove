@@ -135,7 +135,7 @@ final_beat_instruction: |
 image_prompt: |
   Children's book illustration of the following scene: {scene}
   Character visual reference — keep this EXACTLY consistent across every illustration: {visual_profile}
-  Style: colorful, warm, whimsical, watercolor.
+  Style: colorful, warm, whimsical, watercolor. No text, no words, no letters, no signs or labels of any kind.
   Important: original character designs only — do not reproduce any copyrighted or trademarked
   characters. If the story mentions a known fictional character, depict an original character
   inspired by the same archetype instead. Child-friendly, safe for all ages, no scary imagery,
