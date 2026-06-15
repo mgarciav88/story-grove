@@ -198,15 +198,16 @@ def _load_llama():
     """Create a fresh Llama instance from the cached local path.
     Must be called inside a @spaces.GPU context — ZeroGPU releases VRAM after each call,
     so we cannot cache the Llama object across calls."""
-    import ctypes, os
-    # PyPI torch bundles libcudart but loads it with RTLD_LOCAL, so llama_cpp's native
-    # lib can't find it via the normal linker search. Re-load it with RTLD_GLOBAL first.
-    torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
-    for name in ("libcudart.so.12", "libcudart.so"):
-        candidate = os.path.join(torch_lib, name)
-        if os.path.exists(candidate):
-            ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
-            break
+    import glob, os, site as _site
+
+    # PyPI torch 2.x ships CUDA libs in separate nvidia-* packages, not in torch/lib/.
+    # Add those dirs to LD_LIBRARY_PATH before importing llama_cpp so that dlopen()
+    # can resolve libcudart.so.12 when loading libllama.so (dlopen reads the live env).
+    extra = [os.path.join(os.path.dirname(torch.__file__), "lib")]
+    for sp in _site.getsitepackages():
+        extra.extend(glob.glob(os.path.join(sp, "nvidia", "*", "lib")))
+    existing = os.environ.get("LD_LIBRARY_PATH", "")
+    os.environ["LD_LIBRARY_PATH"] = ":".join(extra) + (":" + existing if existing else "")
 
     from llama_cpp import Llama
     path = _ensure_gguf_path()
