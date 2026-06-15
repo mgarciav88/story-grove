@@ -269,7 +269,7 @@ def generate_skeleton(
 
         output_ids = model.generate(
             **inputs,
-            max_new_tokens=512,
+            max_new_tokens=1024,
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
