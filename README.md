@@ -14,6 +14,7 @@ tags:
   - track:backyard
   - sponsor:modal
   - sponsor:openbmb
+  - achievement:offgrid
   - achievement:welltuned
   - achievement:llama
   - achievement:fieldnotes
