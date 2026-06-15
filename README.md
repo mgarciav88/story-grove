@@ -9,7 +9,7 @@ app_file: app.py
 pinned: false
 python_version: "3.12"
 license: h-research
-short_description: Interactive branching story generator for kids, powered by a fine-tuned Gemma 3 4B
+short_description: Interactive branching story generator for kids.
 tags:
   - track:wood
   - sponsor:modal
