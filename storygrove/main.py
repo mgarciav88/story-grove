@@ -269,11 +269,13 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
                     visible=bool(GGUF_MODEL_PATH),
                 )
                 llama_disclaimer = gr.Markdown(
+                    '<div style="background:rgba(0,0,0,0.35);border-left:3px solid #D2A679;'
+                    'border-radius:4px;padding:10px 14px;color:#F5DEB3;font-size:0.88em;'
+                    'line-height:1.5;">'
                     "⚡ Stories generated with GGUF quantized inference. "
                     "Images and audio are disabled in this mode. "
-                    "Uncheck for the full illustrated experience.",
+                    "Uncheck for the full illustrated experience.</div>",
                     visible=False,
-                    elem_classes="llama-disclaimer",
                 )
 
         # ── Story ──────────────────────────────────────────────────────────────

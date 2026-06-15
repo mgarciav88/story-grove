@@ -196,9 +196,7 @@ def _ensure_gguf_path() -> str:
 
 
 def _load_llama():
-    """Create a fresh Llama instance from the cached local path.
-    Must be called inside a @spaces.GPU context — ZeroGPU releases VRAM after each call,
-    so we cannot cache the Llama object across calls."""
+    """Create a Llama instance from the cached local path. Called once; result is cached by _get_llama."""
     import glob, os, site as _site
 
     # PyPI torch 2.x ships CUDA libs in separate nvidia-* packages, not in torch/lib/.
@@ -215,6 +213,17 @@ def _load_llama():
     n_gpu = -1 if torch.cuda.is_available() else 0
     print(f"[StoryGrove] Loading GGUF: {path} (CUDA={torch.cuda.is_available()}, n_gpu_layers={n_gpu})")
     return Llama(model_path=path, n_gpu_layers=n_gpu, n_ctx=4096, chat_format="gemma", verbose=False)
+
+
+_llama_cache = None
+
+def _get_llama():
+    """Return the cached Llama singleton, loading it on first call.
+    Caching avoids repeated create/destroy cycles which corrupt ggml's global CUDA handles."""
+    global _llama_cache
+    if _llama_cache is None:
+        _llama_cache = _load_llama()
+    return _llama_cache
 
 
 def _extract_json(text: str) -> str:
@@ -506,24 +515,6 @@ def _generate_beat_with_retry(
     raise ValueError(f"Failed to generate valid beat after {max_retries} attempts.")
 
 
-def _guarded_beat_stream(
-    messages: list[dict],
-    llm,
-    max_retries: int = 3,
-) -> Generator[tuple[str, Optional[StoryBeat]], None, None]:
-    """
-    Runs _generate_beat_with_retry with llm, then frees llm via finally.
-    The finally block executes the moment the inner generator is exhausted,
-    BEFORE StopIteration reaches the caller — so the Llama is freed before
-    any subsequent torch.cuda operations (e.g. image generation).
-    """
-    try:
-        yield from _generate_beat_with_retry(messages, max_retries=max_retries, llm=llm)
-    finally:
-        del llm
-        gc.collect()
-
-
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def start_story(
@@ -536,9 +527,7 @@ def start_story(
     """Start a new story. Stage 1 generates the skeleton; Stage 2 streams the first beat."""
     prompts = load_prompts()
 
-    # Load Llama once and share it across skeleton + beat 1 to avoid double-Llama CUDA crashes.
-    # The generator closure keeps llm alive until on_start_story finishes iterating it.
-    llm = _load_llama() if (use_gguf and GGUF_MODEL_PATH) else None
+    llm = _get_llama() if (use_gguf and GGUF_MODEL_PATH) else None
 
     skeleton = generate_skeleton(character, age_range, theme, language, llm=llm)
 
@@ -584,9 +573,7 @@ def start_story(
         user=messages[1]["content"],
         beat_number=session.beat_number,
     )
-    if llm is not None:
-        return _guarded_beat_stream(messages, llm), session
-    return _generate_beat_with_retry(messages), session
+    return _generate_beat_with_retry(messages, llm=llm), session
 
 
 def continue_story(
@@ -614,7 +601,5 @@ def continue_story(
         user=messages[1]["content"],
         beat_number=session.beat_number,
     )
-    if session.use_gguf and GGUF_MODEL_PATH:
-        llm = _load_llama()
-        return _guarded_beat_stream(messages, llm), session
-    return _generate_beat_with_retry(messages), session
+    llm = _get_llama() if (session.use_gguf and GGUF_MODEL_PATH) else None
+    return _generate_beat_with_retry(messages, llm=llm), session
