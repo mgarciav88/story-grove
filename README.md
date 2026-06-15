@@ -11,7 +11,7 @@ python_version: "3.12"
 license: h-research
 short_description: Interactive branching story generator for kids.
 tags:
-  - track:wood
+  - track:backyard
   - sponsor:modal
   - sponsor:openbmb
   - achievement:welltuned
@@ -48,6 +48,14 @@ StoryGrove ships with a UI toggle that switches inference from Transformers to *
 
 - GGUF model: [`build-small-hackathon/storygrove-gemma-3-4b-gguf`](https://huggingface.co/build-small-hackathon/storygrove-gemma-3-4b-gguf)
 - Quantization: Q4_K_M (2.49 GB)
+
+---
+
+## 📓 Field Notes
+
+Full write-up covering the architecture, fine-tuning process, eval results, and lessons learned:
+
+**[StoryGrove — Build Small Hackathon](https://huggingface.co/blog/mgarciav/build-small-hackaton-storygrove)**
 
 ---
 
