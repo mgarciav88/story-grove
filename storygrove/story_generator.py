@@ -1,3 +1,4 @@
+import gc
 import os
 import json
 import random
@@ -211,12 +212,13 @@ def _load_llama():
 
     from llama_cpp import Llama
     path = _ensure_gguf_path()
-    print(f"[StoryGrove] Loading GGUF: {path}")
-    return Llama(model_path=path, n_gpu_layers=-1, n_ctx=4096, verbose=False)
+    n_gpu = -1 if torch.cuda.is_available() else 0
+    print(f"[StoryGrove] Loading GGUF: {path} (CUDA={torch.cuda.is_available()}, n_gpu_layers={n_gpu})")
+    return Llama(model_path=path, n_gpu_layers=n_gpu, n_ctx=4096, chat_format="gemma", verbose=False)
 
 
 def _extract_json(text: str) -> str:
-    """Strip markdown fences if present and extract the outermost JSON object."""
+    """Strip markdown fences and extract the first balanced JSON object."""
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -227,10 +229,19 @@ def _extract_json(text: str) -> str:
                 break
         text = "\n".join(lines[1:end]).strip()
     start = text.find("{")
+    if start == -1:
+        return text
+    depth = 0
+    for i, c in enumerate(text[start:], start):
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    # truncated JSON — return best-effort span
     end = text.rfind("}")
-    if start != -1 and end > start:
-        return text[start:end + 1]
-    return text
+    return text[start:end + 1] if end > start else text
 
 
 def _default_beat_arc(max_beats: int) -> list[str]:
@@ -346,6 +357,9 @@ def generate_skeleton(
             if not isinstance(beat_arc, list) or len(beat_arc) != MAX_BEATS:
                 skeleton["beat_arc"] = _default_beat_arc(MAX_BEATS)
             print(f"[StoryGrove] Skeleton ready — paradigm: {skeleton.get('paradigm', '?')}")
+            if GGUF_MODEL_PATH:
+                del llm
+                gc.collect()
             return skeleton
         except (json.JSONDecodeError, ValueError, KeyError):
             print(f"[StoryGrove] Skeleton parse failed (attempt {attempt + 1}):\n{raw}")
@@ -359,6 +373,9 @@ def generate_skeleton(
                 ]
 
     print("[StoryGrove] Using minimal fallback skeleton.")
+    if GGUF_MODEL_PATH:
+        del llm
+        gc.collect()
     return _minimal_skeleton(character, theme, MAX_BEATS)
 
 
