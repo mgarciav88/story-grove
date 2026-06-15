@@ -12,7 +12,7 @@ except ImportError:
 
 from .narrator import narrate
 from .image_generator import generate_image
-from .story_generator import start_story, continue_story, StorySession
+from .story_generator import start_story, continue_story, StorySession, GGUF_MODEL_PATH
 from .prompts import load_prompts
 from .ui.theme import BOOK_CSS, theme as book_theme
 from . import vram_manager, tracer
@@ -73,7 +73,7 @@ def _stream_and_image(generator, session: StorySession):
     """
     Generator that yields (narrative, beat, image) triples.
     Streams text first (image=None), then yields once more with the image.
-    Audio is no longer generated here — it is user-triggered.
+    In llama mode images are skipped (ggml-cuda conflicts with torch CUDA ops).
     """
     last_narrative = ""
     last_beat = None
@@ -83,7 +83,7 @@ def _stream_and_image(generator, session: StorySession):
         last_beat = beat
         yield narrative, None, None
 
-    if last_narrative:
+    if last_narrative and not session.use_gguf:
         image = _generate_image(last_narrative, session)
         yield last_narrative, last_beat, image
 
@@ -95,6 +95,7 @@ def _stream_and_image(generator, session: StorySession):
 #    choices_row, choice_selector, session_state, narrate_btn]
 
 def _make_outputs(narrative, beat, audio, image, session, *, show_narrate: bool = False):
+    show_narrate = show_narrate and not session.use_gguf
     is_odd = session.beat_number % 2 == 1
     story_text = narrative
     if beat and beat.is_final:
@@ -153,12 +154,13 @@ def on_narrate(session):
 # ── Story handlers ─────────────────────────────────────────────────────────────
 
 @_gpu
-def on_start_story(character, age_range, theme_input, language):
+def on_start_story(character, age_range, theme_input, language, llama_mode):
     if not character.strip():
         raise gr.Error("Please enter a character name.")
     if not theme_input.strip():
         raise gr.Error("Please enter a story theme.")
 
+    use_gguf = bool(llama_mode) and bool(GGUF_MODEL_PATH)
     yield _loading("✨ Dreaming up your story...")
 
     generator, session = start_story(
@@ -166,6 +168,7 @@ def on_start_story(character, age_range, theme_input, language):
         age_range=age_range,
         theme=theme_input.strip(),
         language=languages[language],
+        use_gguf=use_gguf,
     )
 
     last_narrative = ""
@@ -260,6 +263,17 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
                     max_lines=2,
                 )
                 start_btn = gr.Button("✨ Begin Story", variant="primary", size="lg")
+                llama_mode_checkbox = gr.Checkbox(
+                    label="⚡ Llama.cpp mode (text only, no images or audio)",
+                    value=False,
+                    visible=bool(GGUF_MODEL_PATH),
+                )
+                llama_disclaimer = gr.Markdown(
+                    "> **Llama.cpp mode:** Stories are generated using GGUF quantized inference. "
+                    "Images and audio are disabled in this mode due to GPU context constraints. "
+                    "For the full experience with illustrations, uncheck this option.",
+                    visible=False,
+                )
 
         # ── Story ──────────────────────────────────────────────────────────────
         with gr.Tab(label="📚 Your Story", id="story"):
@@ -288,9 +302,15 @@ with gr.Blocks(theme=book_theme, css=BOOK_CSS, title="StoryGrove 🌳") as demo:
         choices_row, choice_selector, session_state, narrate_btn,
     ]
 
+    llama_mode_checkbox.change(
+        fn=lambda checked: gr.update(visible=checked),
+        inputs=[llama_mode_checkbox],
+        outputs=[llama_disclaimer],
+    )
+
     start_btn.click(
         fn=on_start_story,
-        inputs=[character_input, age_range_input, theme_input, language_input],
+        inputs=[character_input, age_range_input, theme_input, language_input, llama_mode_checkbox],
         outputs=_outputs,
     )
 

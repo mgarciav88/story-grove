@@ -56,6 +56,7 @@ class StorySession:
     skeleton: dict = field(default_factory=dict)
     full_beats: list = field(default_factory=list)
     llm_calls: list = field(default_factory=list)
+    use_gguf: bool = False
 
     def add_beat(self, beat: str, choice: str):
         self.story_so_far.append(f"Beat {self.beat_number}: {beat[:120]}...")
@@ -316,13 +317,13 @@ def generate_skeleton(
         )},
     ]
 
-    if GGUF_MODEL_PATH:
-        _llm = llm or _load_llama()
+    if llm is not None:
+        _llm = llm
     else:
         model, tokenizer = _get_model_and_tokenizer()
 
     for attempt in range(2):
-        if GGUF_MODEL_PATH:
+        if llm is not None:
             response = _llm.create_chat_completion(
                 messages=messages,
                 max_tokens=1024,
@@ -417,10 +418,9 @@ def _stream_beat(
     StoryBeat becomes non-None once JSON is fully parsed.
     Pass llm to reuse a Llama already loaded for skeleton (avoids double-Llama CUDA issues).
     """
-    if GGUF_MODEL_PATH:
-        _llm = llm or _load_llama()
+    if llm is not None:
         full_text = ""
-        for chunk in _llm.create_chat_completion(
+        for chunk in llm.create_chat_completion(
             messages=messages,
             max_tokens=max_new_tokens,
             temperature=0.8,
@@ -531,13 +531,14 @@ def start_story(
     age_range: str,
     theme: str,
     language: str,
+    use_gguf: bool = False,
 ) -> tuple[Generator, StorySession]:
     """Start a new story. Stage 1 generates the skeleton; Stage 2 streams the first beat."""
     prompts = load_prompts()
 
     # Load Llama once and share it across skeleton + beat 1 to avoid double-Llama CUDA crashes.
     # The generator closure keeps llm alive until on_start_story finishes iterating it.
-    llm = _load_llama() if GGUF_MODEL_PATH else None
+    llm = _load_llama() if (use_gguf and GGUF_MODEL_PATH) else None
 
     skeleton = generate_skeleton(character, age_range, theme, language, llm=llm)
 
@@ -548,6 +549,7 @@ def start_story(
         language=language,
         skeleton=skeleton,
         visual_profile=_visual_profile_from_skeleton(skeleton, character, theme),
+        use_gguf=use_gguf,
     )
 
     session.record_llm_call(
@@ -612,4 +614,7 @@ def continue_story(
         user=messages[1]["content"],
         beat_number=session.beat_number,
     )
+    if session.use_gguf and GGUF_MODEL_PATH:
+        llm = _load_llama()
+        return _guarded_beat_stream(messages, llm), session
     return _generate_beat_with_retry(messages), session
