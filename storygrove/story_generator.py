@@ -505,6 +505,25 @@ def _generate_beat_with_retry(
 
     raise ValueError(f"Failed to generate valid beat after {max_retries} attempts.")
 
+
+def _guarded_beat_stream(
+    messages: list[dict],
+    llm,
+    max_retries: int = 3,
+) -> Generator[tuple[str, Optional[StoryBeat]], None, None]:
+    """
+    Runs _generate_beat_with_retry with llm, then frees llm via finally.
+    The finally block executes the moment the inner generator is exhausted,
+    BEFORE StopIteration reaches the caller — so the Llama is freed before
+    any subsequent torch.cuda operations (e.g. image generation).
+    """
+    try:
+        yield from _generate_beat_with_retry(messages, max_retries=max_retries, llm=llm)
+    finally:
+        del llm
+        gc.collect()
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def start_story(
@@ -563,7 +582,9 @@ def start_story(
         user=messages[1]["content"],
         beat_number=session.beat_number,
     )
-    return _generate_beat_with_retry(messages, llm=llm), session
+    if llm is not None:
+        return _guarded_beat_stream(messages, llm), session
+    return _generate_beat_with_retry(messages), session
 
 
 def continue_story(
