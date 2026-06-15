@@ -21,6 +21,9 @@ MODEL_ID = os.getenv("MODEL_ID", "google/gemma-3-4b-it")
 TEXT_DEVICE = os.getenv("TEXT_DEVICE", "cuda")
 HF_TOKEN = os.getenv("HF_TOKEN")
 USE_4BIT = os.getenv("QUANTIZE_4BIT", "false").lower() == "true"
+# If set, use llama.cpp (GGUF) instead of transformers.
+# Value: local path to .gguf file, or HF repo id like "org/repo" (downloaded on first use).
+GGUF_MODEL_PATH = os.getenv("GGUF_MODEL_PATH")
 MAX_BEATS = 5
 
 REQUIRED_SKELETON_KEYS = {
@@ -154,9 +157,37 @@ def _unloader(instance: tuple):
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
+
+def _llama_loader():
+    """Load GGUF model via llama-cpp-python. GGUF_MODEL_PATH may be a local path or HF repo ID."""
+    from llama_cpp import Llama
+
+    model_path = GGUF_MODEL_PATH
+    if not model_path.startswith("/") and "/" in model_path:
+        from huggingface_hub import HfApi, hf_hub_download
+        api = HfApi(token=HF_TOKEN)
+        gguf_files = [f.rfilename for f in api.list_repo_tree(model_path, token=HF_TOKEN) if f.rfilename.endswith(".gguf")]
+        if not gguf_files:
+            raise FileNotFoundError(f"No .gguf file found in HF repo {model_path}")
+        print(f"[StoryGrove] Downloading GGUF: {model_path}/{gguf_files[0]}")
+        model_path = hf_hub_download(repo_id=model_path, filename=gguf_files[0], token=HF_TOKEN)
+
+    print(f"[StoryGrove] Loading GGUF model: {model_path}")
+    return Llama(model_path=model_path, n_ctx=4096, n_gpu_layers=-1, verbose=False)
+
+
+def _llama_unloader(llm):
+    del llm
+    import gc
+    gc.collect()
+
+
 # ── Register with VRAM manager ─────────────────────────────────────────────────
 
-vram_manager.register(Model.STORY, _loader, _unloader)
+if GGUF_MODEL_PATH:
+    vram_manager.register(Model.STORY, _llama_loader, _llama_unloader)
+else:
+    vram_manager.register(Model.STORY, _loader, _unloader)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -164,6 +195,11 @@ vram_manager.register(Model.STORY, _loader, _unloader)
 def _get_model_and_tokenizer():
     vram_manager.request(Model.STORY)
     return vram_manager.get(Model.STORY)  # returns (model, tokenizer)
+
+
+def _get_llama():
+    vram_manager.request(Model.STORY)
+    return vram_manager.get(Model.STORY)
 
 
 def _extract_json(text: str) -> str:
@@ -242,7 +278,6 @@ def generate_skeleton(
     Falls back to a minimal skeleton if the model output can't be parsed.
     """
     prompts = load_prompts()
-    model, tokenizer = _get_model_and_tokenizer()
 
     messages = [
         {"role": "system", "content": prompts["skeleton_system_prompt"]},
@@ -256,26 +291,39 @@ def generate_skeleton(
         )},
     ]
 
-    for attempt in range(2):
-        inputs = tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            enable_thinking=False,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        )
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    if GGUF_MODEL_PATH:
+        llm = _get_llama()
+    else:
+        model, tokenizer = _get_model_and_tokenizer()
 
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=1024,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
-        )
-        new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
-        raw = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+    for attempt in range(2):
+        if GGUF_MODEL_PATH:
+            response = llm.create_chat_completion(
+                messages=messages,
+                max_tokens=1024,
+                temperature=0.7,
+                top_p=0.9,
+            )
+            raw = response["choices"][0]["message"]["content"].strip()
+        else:
+            inputs = tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                enable_thinking=False,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            output_ids = model.generate(
+                **inputs,
+                max_new_tokens=1024,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+            )
+            new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
+            raw = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
         try:
             skeleton = json.loads(_extract_json(raw))
@@ -342,6 +390,22 @@ def _stream_beat(
     narrative_text grows with each token.
     StoryBeat becomes non-None once JSON is fully parsed.
     """
+    if GGUF_MODEL_PATH:
+        llm = _get_llama()
+        full_text = ""
+        for chunk in llm.create_chat_completion(
+            messages=messages,
+            max_tokens=max_new_tokens,
+            temperature=0.8,
+            top_p=0.95,
+            stream=True,
+        ):
+            delta = chunk["choices"][0]["delta"]
+            if "content" in delta:
+                full_text += delta["content"]
+                yield parse_streaming_response(full_text)
+        return
+
     model, tokenizer = _get_model_and_tokenizer()
 
     inputs = tokenizer.apply_chat_template(
