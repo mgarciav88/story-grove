@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 HF_TOKEN = os.getenv("HF_TOKEN")
-TRACES_REPO = "build-small-hackathon/storygrove-traces"
+TRACES_REPO = os.getenv("TRACES_REPO", "build-small-hackathon/storygrove-traces")
 
 
 def push_async(session) -> None:

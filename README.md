@@ -1,32 +1,16 @@
----
-title: StoryGrove
-emoji: 📚
-colorFrom: blue
-colorTo: green
-sdk: gradio
-sdk_version: 6.16.0
-app_file: app.py
-pinned: false
-python_version: "3.12"
-license: h-research
-short_description: Interactive branching story generator for kids.
-tags:
-  - track:backyard
-  - sponsor:modal
-  - sponsor:openbmb
-  - achievement:offgrid
-  - achievement:welltuned
-  - achievement:llama
-  - achievement:fieldnotes
-  - achievement:sharing
-  - badge-tiny-titan
----
-
 # 🌳 StoryGrove
 
 **An interactive story generator for kids.** You describe a character and a theme — StoryGrove builds a complete illustrated story arc, then streams it page by page. At each beat, the child picks what happens next.
 
 Every story is unique. Every choice matters.
+
+> **Live demo:** [build-small-hackathon/StoryGrove](https://huggingface.co/spaces/build-small-hackathon/StoryGrove) on Hugging Face Spaces
+
+---
+
+## 🎬 Demo
+
+[![StoryGrove Demo](https://img.youtube.com/vi/zEteDr6cCPE/0.jpg)](https://youtu.be/zEteDr6cCPE)
 
 ---
 
@@ -37,7 +21,7 @@ StoryGrove runs a two-stage pipeline fully on-device, no cloud API calls:
 1. **Skeleton** — the model plans the full story arc in one shot: protagonist, setting, symbolic object, 5-beat arc, value learned, and the emotional journey — all as structured JSON.
 2. **Beats** — each page is streamed live, ending with three choices that branch the narrative. The child picks one; the story continues from there.
 
-Both stages are powered by a fine-tuned **Gemma 3 4B** — small enough to run on ZeroGPU, capable enough to write stories that feel real.
+Both stages are powered by a fine-tuned **Gemma 3 4B** — small enough to run on a consumer GPU, capable enough to write stories that feel real.
 
 Illustrations are generated per page by **Flux**, conditioned on a visual profile extracted from the skeleton (character appearance, setting palette, symbolic object). Voice narration for each page is available via **VoxCPM2**.
 
@@ -52,15 +36,42 @@ StoryGrove ships with a UI toggle that switches inference from Transformers to *
 
 ---
 
-## 🎬 Demo
+## Running Locally
 
-[![StoryGrove Demo](https://img.youtube.com/vi/zEteDr6cCPE/0.jpg)](https://youtu.be/zEteDr6cCPE)
+### Requirements
 
----
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/)
+- A CUDA GPU with ~16 GB VRAM recommended (all three models loaded simultaneously). CPU fallback works but is very slow.
+- A Hugging Face account with access to [Gemma 3](https://huggingface.co/google/gemma-3-4b-it) (request access on the model page if needed)
 
-## 📣 Social Post
+### Setup
 
-[Threads post](https://www.threads.com/@migarciav/post/DZoBh1tCPvo)
+```bash
+git clone https://github.com/mgarciav88/story-grove
+cd story-grove
+uv sync
+cp .env.example .env
+# edit .env and fill in your values
+uv run python app.py
+```
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and set:
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `HF_TOKEN` | Yes | — | HuggingFace token — needed to download Gemma (gated model) |
+| `MODEL_ID` | No | `google/gemma-3-4b-it` | Swap for the fine-tuned model: `build-small-hackathon/storygrove-gemma-3-4b` |
+| `QUANTIZE_4BIT` | No | `false` | Set `true` to load the text model in 4-bit (reduces VRAM ~50%) |
+| `TEXT_DEVICE` | No | `cuda` | Set `cpu` if no GPU available |
+| `IMAGE_DEVICE` | No | `cuda` | Set `cpu` to skip GPU for image generation |
+| `NARRATOR_DEVICE` | No | `cuda` | Set `cpu` to skip GPU for narration |
+| `GGUF_MODEL_PATH` | No | — | Set to `build-small-hackathon/storygrove-gemma-3-4b-gguf` to enable llama.cpp mode |
+| `VRAM_SWAP` | No | `false` | Set `true` to swap models in/out of VRAM between beats |
+| `TRACES_REPO` | No | `build-small-hackathon/storygrove-traces` | HF dataset repo where completed story traces are pushed |
+| `DATASET_REPO` | No | `build-small-hackathon/storygrove-sft` | HF dataset repo for the SFT upload script |
 
 ---
 
@@ -78,8 +89,6 @@ Every completed story is automatically pushed to a public dataset as a structure
 
 - Traces dataset: [`build-small-hackathon/storygrove-traces`](https://huggingface.co/datasets/build-small-hackathon/storygrove-traces)
 
-Each trace contains: character inputs, skeleton fields, beat narratives, choices presented and made, and the full system/user/assistant message triples that produced them.
-
 ---
 
 ## 🎯 Fine-Tuning & Eval Results
@@ -91,7 +100,7 @@ The base model was fine-tuned on a dataset of 40 complete story playthroughs (24
 Evaluated on 25 held-out stories against the base `google/gemma-3-4b-it`:
 
 | Metric | Base | Fine-Tuned | Δ |
-|--------|------|-----------|---|
+|---|---|---|---|
 | Skeleton valid JSON (first try) | 48% | **64%** | +33% |
 | Beat choices valid | 96.8% | **100%** | +3.2pp |
 | Avg retries needed | 0.096 | **0.0** | eliminated |
@@ -110,10 +119,10 @@ The headline result: the base model fails to produce valid skeleton JSON on the 
 ## Models Used
 
 | Role | Model | Size |
-|------|-------|-----|
-| Story generation | `build-small-hackathon/storygrove-gemma-3-4b` (fine-tuned Gemma 3) | 4B  |
-| Image generation | Flux-2-Klein (via diffusers) | 4B  |
-| Voice narration | VoxCPM2 | 2B  |
+|---|---|---|
+| Story generation | `build-small-hackathon/storygrove-gemma-3-4b` (fine-tuned Gemma 3) | 4B |
+| Image generation | Flux-2-Klein (via diffusers) | 4B |
+| Voice narration | VoxCPM2 | 2B |
 | GGUF inference | `storygrove-gemma-3-4b-gguf` Q4_K_M | 2.49 GB |
 
 ---

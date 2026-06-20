@@ -46,3 +46,6 @@ data/processed/
 
 # Modal
 .modal/
+
+# Claude Code
+.claude/
